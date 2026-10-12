@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>setuparr</Name>
+  <Repository>ghcr.io/p1zzm1ssile/setuparr:latest</Repository>
+  <Registry>https://github.com/p1zzm1ssile/Setuparr/pkgs/container/setuparr</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/p1zzm1ssile/Setuparr/issues</Support>
+  <TemplateURL>https://raw.githubusercontent.com/p1zzm1ssile/unraid-templates/main/templates/setuparr.xml</TemplateURL>
+  <Project>https://github.com/p1zzm1ssile/Setuparr</Project>
+  <Overview>Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself. Starts in report-only mode and is set up in its web UI.</Overview>
+  <Category>MediaApp:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:9893]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/p1zzm1ssile/Setuparr/main/src/web/icon.png</Icon>
+  <ExtraParams/>
+  <Config Name="Web UI port" Target="9893" Default="9893" Mode="tcp" Description="Port for the Setuparr web UI" Type="Port" Display="always" Required="true" Mask="false">9893</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/setuparr" Mode="rw" Description="Settings, login and logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/setuparr</Config>
+</Container>

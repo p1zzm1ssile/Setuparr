@@ -1,0 +1,320 @@
+"""The Setuparr web UI and its JSON API."""
+
+import glob
+import io
+import json
+import os
+import re
+import time
+import zipfile
+from collections import deque
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+import app_info
+import utils.auth as auth
+import utils.config as config
+import utils.status as status
+from services.connections import Service, ServiceError
+from utils.logger import logger
+
+WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
+STATIC = {
+    "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/static/app.css": ("app.css", "text/css; charset=utf-8"),
+    "/static/login.js": ("login.js", "text/javascript; charset=utf-8"),
+    "/static/icon.png": ("icon.png", "image/png"),
+    "/static/logo.png": ("logo.png", "image/png"),
+}
+COOKIE = f"{app_info.SLUG}_session"
+WRITE_HEADER = f"X-{app_info.NAME}"
+LOG_LINE = re.compile(r"^(?P<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(?P<level>[A-Z]+)\] (?P<message>.*)$")
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+SERVICE_LABELS = {key: label for key, label, *_ in app_info.SERVICES}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = app_info.NAME
+    sys_version = ""
+
+    def log_message(self, format, *args):
+        pass
+
+    # Helpers
+
+    @property
+    def ip(self):
+        return self.client_address[0]
+
+    def token(self):
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        return cookie[COOKIE].value if COOKIE in cookie else ""
+
+    def user(self):
+        """The signed-in user, "(local network)" with the LAN bypass, or None."""
+        user = auth.session_user(self.token())
+        if user:
+            return user
+        if auth.has_account() and auth.lan_bypass(self.ip, self.headers):
+            return "(local network)"
+        return None
+
+    def send(self, code, body=b"", content_type="application/json", headers=None):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body).encode()
+        elif isinstance(body, str):
+            body = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for k, v in {**SECURITY_HEADERS, **(headers or {})}.items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def redirect(self, location):
+        self.send(302, b"", "text/plain", {"Location": location})
+
+    def page(self, name):
+        with open(os.path.join(WEB_DIR, name), "rb") as f:
+            self.send(200, f.read(), "text/html; charset=utf-8")
+
+    def body(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 1_000_000:
+            raise ValueError("Request too large")
+        try:
+            return json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            raise ValueError("Invalid JSON")
+
+    def session_cookie(self, token, max_age):
+        return f"{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
+
+    # Routing
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        url = urlparse(self.path)
+        path = url.path
+        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+
+        try:
+            if path in STATIC:
+                name, content_type = STATIC[path]
+                with open(os.path.join(WEB_DIR, name), "rb") as f:
+                    return self.send(200, f.read(), content_type)
+
+            if path == "/health":
+                result = status.health()
+                code = 200 if result["healthy"] else 503
+                # Without a login, only say whether it's healthy
+                return self.send(code, result if self.user() else {"healthy": result["healthy"]})
+
+            if path == "/login":
+                if not auth.has_account():
+                    return self.redirect("/setup")
+                if self.user():
+                    return self.redirect("/")
+                return self.page("login.html")
+
+            if path == "/setup":
+                if auth.has_account():
+                    return self.redirect("/login")
+                return self.page("setup.html")
+
+            if path == "/api/session":
+                return self.send(200, {
+                    "user": self.user(),
+                    "has_account": auth.has_account(),
+                    "needs_setup": not auth.has_account(),
+                    "password_rules": [{"id": i, "text": t} for i, t, _ in auth.PASSWORD_RULES],
+                    "locked_for": auth.locked_for(self.ip),
+                })
+
+            # Everything below needs a login
+            if not self.user():
+                if path.startswith("/api/"):
+                    return self.send(401, {"error": "Please log in"})
+                return self.redirect("/login" if auth.has_account() else "/setup")
+
+            if path == "/":
+                return self.page("app.html")
+            if path == "/api/status":
+                return self.send(200, {**status.health(), "version": app_info.VERSION})
+            if path == "/api/dashboard":
+                return self.send(200, dashboard())
+            if path == "/api/settings":
+                return self.send(200, {
+                    "tabs": config.TABS,
+                    # Without defaults: they come from environment variables and can
+                    # hold API keys. Only values, with secrets masked, go to the browser.
+                    "fields": [{k: v for k, v in f.items() if k != "default"} for f in config.FIELDS],
+                    "values": config.public_values(),
+                    "username": auth.username(),
+                })
+            if path == "/api/logs":
+                return self.send(200, read_logs(query.get("filter", "all")))
+            if path == "/api/logs/download":
+                return self.send(200, zip_logs(), "application/zip", {
+                    "Content-Disposition": f'attachment; filename="{app_info.SLUG}-logs-{time.strftime("%Y%m%d-%H%M%S")}.zip"'
+                })
+
+            self.send(404, {"error": "Not found"})
+        except ValueError as e:
+            self.send(400, {"error": str(e)})
+        except Exception as e:
+            logger.error(f"Web UI error on {path} | {e}")
+            self.send(500, {"error": str(e)})
+
+    def do_POST(self):
+        self.handle_write()
+
+    def do_PUT(self):
+        self.handle_write()
+
+    def handle_write(self):
+        path = urlparse(self.path).path
+
+        # Only accept writes from our own pages: a form on another site
+        # can't set this header, and the session cookie is SameSite=Strict too
+        if self.headers.get(WRITE_HEADER) != "1":
+            return self.send(403, {"error": "Missing request header"})
+
+        try:
+            data = self.body()
+
+            if path == "/api/setup":
+                if auth.has_account():
+                    return self.send(403, {"error": "An account already exists"})
+                if auth.locked_for(self.ip):
+                    return self.send(429, {"error": "Too many attempts. Try again in a few minutes"})
+                if not auth.can_create_account(data.get("code")):
+                    # Count it like a failed login, so the code can't be guessed
+                    auth.login(self.ip, "", "")
+                    logger.warning(f"Wrong setup code entered from {self.ip}")
+                    return self.send(403, {"error": f"That setup code isn't right. It's in {app_info.NAME}'s log"})
+                auth.set_password(data.get("username"), data.get("password"))
+                logger.info(f"Created web UI account {auth.username()}")
+                token = auth.login(self.ip, data.get("username"), data.get("password"))
+                return self.send(200, {"ok": True}, headers={"Set-Cookie": self.session_cookie(token, auth.SESSION_SECONDS)})
+
+            if path == "/api/login":
+                if wait := auth.locked_for(self.ip):
+                    return self.send(429, {"error": f"Too many attempts. Try again in {wait // 60 + 1} minute(s)"})
+                token = auth.login(self.ip, data.get("username"), data.get("password"))
+                if not token:
+                    logger.warning(f"Failed web UI login from {self.ip}")
+                    if wait := auth.locked_for(self.ip):
+                        return self.send(429, {"error": f"Too many attempts. Try again in {wait // 60 + 1} minute(s)"})
+                    return self.send(401, {"error": "Wrong username or password"})
+                return self.send(200, {"ok": True}, headers={"Set-Cookie": self.session_cookie(token, auth.SESSION_SECONDS)})
+
+            if path == "/api/logout":
+                auth.logout(self.token())
+                return self.send(200, {"ok": True}, headers={"Set-Cookie": self.session_cookie("", 0)})
+
+            if not self.user():
+                return self.send(401, {"error": "Please log in"})
+
+            if path == "/api/settings":
+                changes = data.get("values") or {}
+                errors = config.update(changes)
+                if errors:
+                    return self.send(400, {"errors": errors})
+                logger.info(f"Settings saved ({', '.join(sorted(changes.keys()))})")
+                return self.send(200, {"ok": True, "values": config.public_values()})
+
+            if path == "/api/test":
+                return self.send(200, test_connection(data.get("target", ""), data.get("values") or {}))
+
+            if path == "/api/password":
+                if self.user() == "(local network)" and not auth.session_user(self.token()):
+                    return self.send(403, {"error": "Log in with your password to change it"})
+                if not auth.check_password(auth.username(), data.get("current", "")):
+                    return self.send(400, {"error": "Current password is wrong"})
+                auth.set_password(data.get("username") or auth.username(), data.get("password"))
+                logger.info("Web UI password changed")
+                token = auth.login(self.ip, data.get("username") or auth.username(), data.get("password"))
+                return self.send(200, {"ok": True}, headers={"Set-Cookie": self.session_cookie(token, auth.SESSION_SECONDS)})
+
+            self.send(404, {"error": "Not found"})
+        except ValueError as e:
+            self.send(400, {"error": str(e)})
+        except Exception as e:
+            logger.error(f"Web UI error on {path} | {e}")
+            self.send(500, {"error": str(e)})
+
+
+# API helpers
+
+
+def dashboard():
+    return {
+        "tagline": app_info.TAGLINE,
+        "planned": app_info.PLANNED,
+        "connections": [
+            {"key": key, "label": label, "enabled": bool(getattr(config, f"{key}_enabled"))}
+            for key, label, *_ in app_info.SERVICES
+        ],
+    }
+
+
+def read_logs(kind):
+    lines = []
+    try:
+        with open(config.log_file, errors="replace") as f:
+            # Only keep the end of the file, rather than reading all of it into memory
+            raw = deque(f, maxlen=max(config.log_lines * 5, 2000))
+    except FileNotFoundError:
+        raw = []
+    for line in raw:
+        match = LOG_LINE.match(line.rstrip("\n"))
+        entry = match.groupdict() if match else {"time": "", "level": "INFO", "message": line.rstrip("\n")}
+        if kind == "issues" and entry["level"] not in ("ERROR", "CRITICAL", "WARNING"):
+            continue
+        if kind == "actions" and entry["level"] != "ACTION":
+            continue
+        lines.append(entry)
+    return {"lines": lines[-config.log_lines:]}
+
+
+def zip_logs():
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in sorted(glob.glob(os.path.join(config.log_dir, "*.log*"))):
+            z.write(path, os.path.basename(path))
+    return buffer.getvalue()
+
+
+def test_connection(target, values):
+    """Try a connection with the settings on screen, saved or not."""
+    if target not in SERVICE_LABELS:
+        return {"ok": False, "message": "Unknown service"}
+    label = SERVICE_LABELS[target]
+    try:
+        cfg = config.preview(values)
+        if not getattr(cfg, f"{target}_api_key"):
+            return {"ok": False, "message": f"Enter the {'token' if target == 'plex' else 'API key'} first"}
+        return {"ok": True, "message": f"Connected to {label} {Service(target, label, cfg).version()}".rstrip()}
+    except (ServiceError, ValueError) as e:
+        return {"ok": False, "message": str(e)}
+
+
+def serve():
+    server = ThreadingHTTPServer(("", config.web_port), Handler)
+    server.daemon_threads = True
+    logger.info(f"Starting web UI at {config.web_host}:{config.web_port}")
+    if not auth.has_account():
+        logger.log("STARTUP", f"First run: open the web UI and use setup code {auth.SETUP_CODE} to create your login")
+    server.serve_forever()
