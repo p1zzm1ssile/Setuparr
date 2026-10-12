@@ -4,51 +4,80 @@
 
 Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself.
 
-> **Early version.** The web UI, login and connections to Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex work today. The checks below are being built and
-> will arrive in the next releases. Watch or star the repository to hear when they land.
+It only reads from your apps. Nothing is changed until you press **Fix it**, and every fix can be undone from the
+Dashboard.
 
-## What it will check
+## What it checks
+
+Press **Run checks** on the Dashboard (they also run by themselves once a day). Each finding says what's wrong, why it
+matters and how to fix it, with a link to the TRaSH guide. Some have a **Fix it** button. You can dismiss anything you've
+decided to leave as it is.
 
 ### Your Unraid setup
 
-- Reads only the files you upload: the Docker templates and share settings from your flash drive. It never scans your server or needs the Docker socket. Passwords and keys in them are blanked as soon as they're opened.
-- Hardlinks and instant moves: whether your download client and Sonarr/Radarr share one /data folder, as the TRaSH guide sets out.
-- Folders that don't match between your download client and Sonarr/Radarr, so downloads never import.
-- /mnt/user mixed with /mnt/cache or /mnt/diskX for the same files.
-- PUID, PGID and UMASK that differ between containers.
-- Share cache and mover settings for your data and appdata shares.
+From the Docker templates and share settings you give it on the **Unraid** page (see below):
 
-### Tags
+- **Hardlinks and instant moves:** whether Sonarr and Radarr see downloads and your library through one mapping, as the
+  TRaSH guide sets out, or copy every download.
+- **Downloads they can't reach:** library apps whose mappings don't include any download client's folder.
+- **Paths that don't match:** a download client saving to `/downloads` while Sonarr sees the same folder as
+  `/data/torrents`, which needs a Remote Path Mapping.
+- **`/mnt/user` mixed with a disk or pool path** for the same share, a known way to lose data.
+- **PUID, PGID and UMASK** that differ between containers.
+- **appdata or system shares** that can end up on the array, and downloads and media spread over several shares.
 
-- Indexers and download clients that only work for tagged items, leaving untagged ones with nowhere to search or download.
-- Tags on indexers, download clients, delay and release profiles that nothing uses.
-- Duplicate tags like 4k and 4K, and tags left over from old setups.
-- Prowlarr indexers that miss the FlareSolverr tag, or don't reach an app because the tags don't match.
-- Tags Seerr adds to requests that no longer exist in Sonarr or Radarr.
+### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
-### Anime
+- Tags nothing uses (**Fix it** deletes them).
+- Indexers, download clients and profiles limited to a tag no series or film has, so they're never used.
+- Every indexer or download client tagged, leaving untagged series or films with none.
+- Tags that look like the same thing, such as `4k` and `4-k`.
+- Prowlarr: FlareSolverr with no tag or no indexer sharing its tag, and apps that get no indexers because of their tags.
+- Seerr: tags it adds to requests that were deleted in Sonarr or Radarr.
 
-- Anime series set to Standard instead of Anime in Sonarr, which searches with the wrong episode numbers.
-- Anime outside your anime folder, quality profile or tag, and other shows inside them.
-- Anime naming and quality profiles against the TRaSH anime guide.
-- Indexers missing the anime category, and Seerr's anime settings.
+### Anime (Sonarr, Seerr)
 
-### TRaSH guides
+- Series TVDB calls anime that aren't set to the Anime series type (**Fix it** sets them), Japanese animation that may be
+  anime, and normal shows set to Anime.
+- Anime outside your anime root folder or quality profile, and other shows inside them.
+- An anime episode format without the absolute episode number.
+- Indexers with no anime categories.
+- Seerr with no anime root folder or profile, so requested anime lands in your TV setup.
 
-- Custom formats, quality profiles, quality sizes and naming in Sonarr and Radarr.
-- Prowlarr's sync to your apps, Jellyfin and Plex settings.
-- Each difference has a Fix it button that shows the change before making it and keeps a backup, or step-by-step instructions for the things it shouldn't change itself.
+### Coming next
 
-### Genres
+- TRaSH guide custom formats, quality profiles, sizes and naming, Prowlarr sync, Jellyfin and Plex settings.
+- Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
+- More **Fix it** buttons, and anime checks for Radarr.
 
-- Your own rules, such as Kids, Documentaries or Stand-up going to their own folder, profile and tag, and a list of everything that doesn't follow them.
+## Giving Setuparr your Unraid settings
+
+Setuparr never looks around your server and doesn't need the Docker socket. It reads only the files you give it, and
+keeps only each container's name, image, network, folder mappings and ports, and its PUID, PGID, UMASK and TZ.
+Everything else in them, including passwords and API keys, is dropped as they're read and never saved.
+
+**From Unraid's terminal (easiest).** Click the `>_` icon at the top right of Unraid, paste this and press Enter:
+
+```bash
+cd /boot/config && tar -czf /mnt/user/appdata/setuparr/unraid-config.tar.gz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null)
+```
+
+Then press **Import from the config folder** on the Unraid page. Setuparr reads the file and deletes it, so the
+passwords in it don't stay in appdata. Change `/mnt/user/appdata/setuparr` if your config folder is elsewhere.
+
+**Or choose the files.** Export the flash share over SMB (read-only is fine), open `\\tower\flash\config`, and
+choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of them.
+
+Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Run
+the import again whenever you change a container.
 
 ## Install on Unraid
 
 1. Add the template from [`unraid/setuparr.xml`](unraid/setuparr.xml), or search Community Apps for Setuparr.
 2. Keep the **Config** folder at `/mnt/user/appdata/setuparr`.
 3. Start it, open the web UI (port 9893), and create your login with the setup code from the container's log.
-4. Add your apps under **Settings** and press **Test connection** on each.
+4. Add your apps under **Settings** (addresses start with `http://`) and press **Test connection** on each.
+5. Give it your Unraid settings on the **Unraid** page, then press **Run checks** on the Dashboard.
 
 ## Install with Docker
 

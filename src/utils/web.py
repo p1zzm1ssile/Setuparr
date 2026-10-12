@@ -1,5 +1,6 @@
 """The Setuparr web UI and its JSON API."""
 
+import base64
 import glob
 import io
 import json
@@ -16,6 +17,8 @@ import app_info
 import utils.auth as auth
 import utils.config as config
 import utils.status as status
+from checks.unraid import UploadError
+from core import runner
 from services.connections import Service, ServiceError
 from utils.logger import logger
 
@@ -87,9 +90,9 @@ class Handler(BaseHTTPRequestHandler):
         with open(os.path.join(WEB_DIR, name), "rb") as f:
             self.send(200, f.read(), "text/html; charset=utf-8")
 
-    def body(self):
+    def body(self, limit=1_000_000):
         length = int(self.headers.get("Content-Length") or 0)
-        if length > 1_000_000:
+        if length > limit:
             raise ValueError("Request too large")
         try:
             return json.loads(self.rfile.read(length) or b"{}")
@@ -154,6 +157,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {**status.health(), "version": app_info.VERSION})
             if path == "/api/dashboard":
                 return self.send(200, dashboard())
+            if path == "/api/unraid":
+                snap = runner.snapshot()
+                return self.send(200, {"summary": unraid_summary(snap), "import_names": runner.IMPORT_NAMES})
             if path == "/api/settings":
                 return self.send(200, {
                     "tabs": config.TABS,
@@ -192,7 +198,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(403, {"error": "Missing request header"})
 
         try:
-            data = self.body()
+            # Uploaded Unraid files come base64-encoded in JSON, so allow more for them
+            data = self.body(80_000_000 if path == "/api/unraid/upload" and self.user() else 1_000_000)
 
             if path == "/api/setup":
                 if auth.has_account():
@@ -233,6 +240,8 @@ class Handler(BaseHTTPRequestHandler):
                 if errors:
                     return self.send(400, {"errors": errors})
                 logger.info(f"Settings saved ({', '.join(sorted(changes.keys()))})")
+                if any(k.split("_")[0] in SERVICE_LABELS for k in changes):
+                    runner.run_in_background()
                 return self.send(200, {"ok": True, "values": config.public_values()})
 
             if path == "/api/test":
@@ -248,8 +257,45 @@ class Handler(BaseHTTPRequestHandler):
                 token = auth.login(self.ip, data.get("username") or auth.username(), data.get("password"))
                 return self.send(200, {"ok": True}, headers={"Set-Cookie": self.session_cookie(token, auth.SESSION_SECONDS)})
 
+            if path == "/api/run":
+                if runner.results()["running"]:
+                    return self.send(409, {"error": "The checks are already running"})
+                runner.run_in_background()
+                return self.send(200, {"ok": True, "message": "Checking"})
+            if path == "/api/fix":
+                return self.send(200, {"ok": True, "message": runner.apply_fix(str(data.get("id", "")))})
+            if path == "/api/undo":
+                return self.send(200, {"ok": True, "message": runner.undo_fix(str(data.get("id", "")))})
+            if path == "/api/dismiss":
+                runner.set_dismissed(str(data.get("id", "")), bool(data.get("dismissed")))
+                return self.send(200, {"ok": True})
+
+            if path in ("/api/unraid/upload", "/api/unraid/import-folder"):
+                if path == "/api/unraid/upload":
+                    files = []
+                    for f in data.get("files") or []:
+                        try:
+                            files.append((str(f.get("name", "")), base64.b64decode(f.get("data", ""), validate=True)))
+                        except (ValueError, TypeError, AttributeError):
+                            raise ValueError(f"{f.get('name', 'A file')} couldn't be read")
+                    if not files:
+                        raise ValueError("Choose some files first")
+                    summary = runner.import_files(files)
+                else:
+                    summary = runner.import_from_config_folder()
+                runner.run_in_background()
+                return self.send(200, {"ok": True, "summary": summary})
+            if path == "/api/unraid/ignore":
+                runner.set_ignored([str(n) for n in data.get("names") or []])
+                runner.run_in_background()
+                return self.send(200, {"ok": True})
+            if path == "/api/unraid/forget":
+                runner.forget_snapshot()
+                runner.run_in_background()
+                return self.send(200, {"ok": True})
+
             self.send(404, {"error": "Not found"})
-        except ValueError as e:
+        except (ValueError, UploadError, ServiceError) as e:
             self.send(400, {"error": str(e)})
         except Exception as e:
             logger.error(f"Web UI error on {path} | {e}")
@@ -259,10 +305,17 @@ class Handler(BaseHTTPRequestHandler):
 # API helpers
 
 
+def unraid_summary(snap):
+    from checks.unraid import summary
+    return summary(snap) if snap else None
+
+
 def dashboard():
     return {
         "tagline": app_info.TAGLINE,
         "planned": app_info.PLANNED,
+        "results": runner.results(),
+        "fixes": runner.fixes()[:20],
         "connections": [
             {"key": key, "label": label, "enabled": bool(getattr(config, f"{key}_enabled"))}
             for key, label, *_ in app_info.SERVICES

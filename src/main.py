@@ -7,6 +7,7 @@ import app_info
 import utils.config as config
 import utils.status as status
 import utils.web as web
+from core import runner
 from utils.logger import logger
 
 
@@ -22,8 +23,12 @@ def main():
     threading.Thread(target=web.serve, daemon=True).start()
     logger.log("STARTUP", f"{app_info.NAME} is running. Open the web UI on port {config.web_port}")
 
+    next_check = time.time() + 30  # give the apps a moment if they're starting with the server
     while True:
         status.heartbeat(problems())
+        if time.time() >= next_check:
+            runner.run_in_background()
+            next_check = time.time() + config.check_interval_hours * 3600
         time.sleep(60)
 
 
