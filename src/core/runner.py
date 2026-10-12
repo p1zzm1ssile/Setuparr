@@ -1,0 +1,274 @@
+"""Running the checks, keeping the results, and carrying out fixes.
+
+Results, the Unraid snapshot and the fix history live as JSON in CONFIG_DIR.
+A fix is only ever carried out from the server's own stored copy of a
+finding: the browser sends nothing but the finding's id.
+"""
+
+import json
+import os
+import threading
+import time
+
+import utils.config as config
+from checks import SEVERITY_ORDER, anime, tags, unraid
+from services.connections import ServiceError, connected
+from utils.logger import logger
+
+RESULTS_FILE = os.path.join(config.config_dir, "results.json")
+SNAPSHOT_FILE = os.path.join(config.config_dir, "unraid.json")
+FIXES_FILE = os.path.join(config.config_dir, "fixes.json")
+# Dropped into the config folder from Unraid's terminal, imported, then deleted
+IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip", "unraid-config.tar")
+
+_lock = threading.Lock()
+_running = threading.Event()
+
+
+def _read(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _write(path, data):
+    os.makedirs(config.config_dir, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=1)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def results():
+    data = _read(RESULTS_FILE, {"ran_at": None, "findings": [], "errors": []})
+    data["running"] = _running.is_set()
+    dismissed = set(_read(FIXES_FILE, {}).get("dismissed", []))
+    for f in data["findings"]:
+        f["dismissed"] = f["id"] in dismissed
+    return data
+
+
+# The Unraid snapshot
+
+
+def snapshot():
+    return _read(SNAPSHOT_FILE, None)
+
+
+def import_files(files):
+    """[(name, bytes)] from an upload or the config folder. Returns a summary."""
+    snap = unraid.build_snapshot(unraid.read_upload(files))
+    old = snapshot() or {}
+    snap["ignored"] = [n for n in old.get("ignored", []) if any(c["name"] == n for c in snap["containers"])]
+    snap["imported_at"] = time.time()
+    _write(SNAPSHOT_FILE, snap)
+    logger.log("ACTION", f"Imported Unraid settings: {len(snap['containers'])} containers, {len(snap['shares'])} shares")
+    return unraid.summary(snap)
+
+
+def import_from_config_folder():
+    """Import an archive left in the config folder, then delete it, since it can hold passwords."""
+    for name in IMPORT_NAMES:
+        path = os.path.join(config.config_dir, name)
+        if os.path.isfile(path):
+            with open(path, "rb") as f:
+                data = f.read()
+            summary = import_files([(name, data)])
+            os.remove(path)
+            logger.info(f"Deleted {name} from the config folder after importing it")
+            return summary
+    raise unraid.UploadError(f"There's no {IMPORT_NAMES[0]} in Setuparr's config folder yet")
+
+
+def set_ignored(names):
+    snap = snapshot()
+    if not snap:
+        raise ValueError("Nothing has been imported yet")
+    known = {c["name"] for c in snap["containers"]}
+    snap["ignored"] = sorted(n for n in names if n in known)
+    _write(SNAPSHOT_FILE, snap)
+
+
+def forget_snapshot():
+    if os.path.exists(SNAPSHOT_FILE):
+        os.remove(SNAPSHOT_FILE)
+
+
+# Fetching from the apps
+
+
+def fetch_arr(arr, kind):
+    data = {
+        "tags": arr.call("GET", "/tag/detail"),
+        "indexers": arr.call("GET", "/indexer"),
+        "clients": arr.call("GET", "/downloadclient"),
+        "items": arr.call("GET", "/series" if kind == "sonarr" else "/movie"),
+    }
+    if kind == "sonarr":
+        data["roots"] = arr.call("GET", "/rootfolder")
+        data["profiles"] = arr.call("GET", "/qualityprofile")
+        data["naming"] = arr.call("GET", "/config/naming")
+    return data
+
+
+def fetch_prowlarr(p):
+    return {"tags": p.call("GET", "/tag/detail"), "indexers": p.call("GET", "/indexer"),
+            "proxies": p.call("GET", "/indexerproxy"), "apps": p.call("GET", "/applications")}
+
+
+def fetch_seerr(s):
+    servers = []
+    for kind in ("sonarr", "radarr"):
+        for settings in s.call("GET", f"/settings/{kind}") or []:
+            try:
+                live = (s.call("GET", f"/service/{kind}/{settings['id']}") or {}).get("tags")
+            except ServiceError:
+                live = None  # The server may be down; its tags just aren't checked
+            servers.append({"kind": kind, "settings": settings, "live_tags": live})
+    return {"servers": servers}
+
+
+def run():
+    """Run every check that has what it needs. Safe to call from several threads."""
+    if not _lock.acquire(blocking=False):
+        return False
+    _running.set()
+    try:
+        findings, errors = [], []
+        services = connected(config)
+        fetched = {}
+        fetchers = {"sonarr": lambda s: fetch_arr(s, "sonarr"), "radarr": lambda s: fetch_arr(s, "radarr"),
+                    "prowlarr": fetch_prowlarr, "seerr": fetch_seerr}
+        for key, fetch in fetchers.items():
+            if key in services:
+                try:
+                    fetched[key] = fetch(services[key])
+                except ServiceError as e:
+                    errors.append(str(e))
+
+        def run_check(name, fn, *args):
+            try:
+                findings.extend(fn(*args))
+            except Exception as e:  # A bug in one check shouldn't hide the others
+                logger.error(f"The {name} check failed | {e}")
+                errors.append(f"The {name} check failed: {e}")
+
+        snap = snapshot()
+        if snap:
+            run_check("Unraid", unraid.check, snap)
+        for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")):
+            if key in fetched:
+                run_check(f"{label} tags", tags.check_arr, key, label, fetched[key])
+        if "prowlarr" in fetched:
+            run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
+        if "seerr" in fetched:
+            run_check("Seerr tags", tags.check_seerr, fetched["seerr"])
+        if "sonarr" in fetched:
+            run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
+
+        findings.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], f["area"], f["title"]))
+        _write(RESULTS_FILE, {"ran_at": time.time(), "findings": findings, "errors": errors,
+                              "checked": {"unraid": bool(snap), **{k: k in fetched for k in fetchers}}})
+        logger.info(f"Checks finished: {len(findings)} found" + (f", {len(errors)} couldn't run" if errors else ""))
+        return True
+    finally:
+        _running.clear()
+        _lock.release()
+
+
+def run_in_background():
+    threading.Thread(target=run, daemon=True).start()
+
+
+# Fixes
+
+
+def _history():
+    return _read(FIXES_FILE, {"fixes": [], "dismissed": []})
+
+
+def _service(key):
+    service = connected(config).get(key)
+    if not service:
+        raise ValueError(f"{key.capitalize()} isn't connected any more. Check Settings")
+    return service
+
+
+def apply_fix(finding_id):
+    found = next((f for f in _read(RESULTS_FILE, {}).get("findings", []) if f["id"] == finding_id), None)
+    if not found or not found.get("fix"):
+        raise ValueError("That fix isn't available any more. Run the checks again")
+    action, params = found["fix"]["action"], found["fix"]["params"]
+
+    if action == "delete_tag":
+        service = _service(params["service"])
+        tag = service.call("GET", f"/tag/{params['tag_id']}")
+        detail = next((t for t in service.call("GET", "/tag/detail") if t["id"] == params["tag_id"]), None)
+        if detail and tags.linked(detail):
+            raise ValueError(f"The tag \"{tag['label']}\" is in use now, so it wasn't deleted. Run the checks again")
+        service.call("DELETE", f"/tag/{params['tag_id']}")
+        undo = {"action": "create_tag", "params": {"service": params["service"], "label": tag["label"]}}
+        message = f"Deleted the tag \"{tag['label']}\" from {service.label}"
+
+    elif action == "set_series_type":
+        service = _service("sonarr")
+        before = {}
+        for series_id in params["series_ids"]:
+            series = service.call("GET", f"/series/{series_id}")
+            before[str(series_id)] = series.get("seriesType")
+            series["seriesType"] = params["type"]
+            service.call("PUT", f"/series/{series_id}", series)
+        undo = {"action": "restore_series_type", "params": {"types": before}}
+        message = f"Set {len(before)} series to {params['type'].capitalize()} in Sonarr"
+    else:
+        raise ValueError("Unknown fix")
+
+    history = _history()
+    history["fixes"].insert(0, {"id": f"{int(time.time() * 1000)}", "at": time.time(), "title": found["title"],
+                                "message": message, "undo": undo, "undone": False})
+    history["fixes"] = history["fixes"][:200]
+    _write(FIXES_FILE, history)
+    logger.log("ACTION", message)
+    run_in_background()
+    return message
+
+
+def undo_fix(fix_id):
+    history = _history()
+    entry = next((f for f in history["fixes"] if f["id"] == fix_id), None)
+    if not entry or entry["undone"]:
+        raise ValueError("That can't be undone")
+    action, params = entry["undo"]["action"], entry["undo"]["params"]
+    if action == "create_tag":
+        service = _service(params["service"])
+        service.call("POST", "/tag", {"label": params["label"]})
+        message = f"Added the tag \"{params['label']}\" back to {service.label}"
+    elif action == "restore_series_type":
+        service = _service("sonarr")
+        for series_id, old in params["types"].items():
+            series = service.call("GET", f"/series/{series_id}")
+            series["seriesType"] = old
+            service.call("PUT", f"/series/{series_id}", series)
+        message = f"Put {len(params['types'])} series back to their old series type in Sonarr"
+    else:
+        raise ValueError("Unknown undo")
+    entry["undone"] = True
+    _write(FIXES_FILE, history)
+    logger.log("ACTION", f"Undo: {message}")
+    run_in_background()
+    return message
+
+
+def fixes():
+    return [{k: v for k, v in f.items() if k != "undo"} for f in _history()["fixes"]]
+
+
+def set_dismissed(finding_id, dismissed):
+    history = _history()
+    ids = set(history.get("dismissed", []))
+    (ids.add if dismissed else ids.discard)(finding_id)
+    history["dismissed"] = sorted(ids)
+    _write(FIXES_FILE, history)

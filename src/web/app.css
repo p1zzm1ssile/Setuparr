@@ -392,3 +392,16 @@ ul.files li.unwanted .fname { color: var(--muted); text-decoration: line-through
 @media (max-width: 700px) { .tag-controls select { width: 100%; } }
 
 input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0.4rem 0 0.2rem; }
+
+/* Findings */
+label.button input[type="file"] { display: none; }
+label.button { cursor: pointer; }
+.toolbar h1 { margin: 0; }
+.panel details { margin: 0.5rem 0 0.75rem; }
+.panel details summary { cursor: pointer; color: var(--accent); font-size: 0.9rem; }
+.panel details ul { margin: 0.5rem 0 0; max-height: 18rem; overflow-y: auto; font-size: 0.9rem; }
+.panel ol { margin: 0.4rem 0 0.75rem; padding-left: 1.4rem; }
+.panel ol li { margin: 0.2rem 0; }
+.panel .row-wrap .badge { margin-right: 0.25rem; }
+.panel.empty { text-align: center; }
+.panel .card-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }

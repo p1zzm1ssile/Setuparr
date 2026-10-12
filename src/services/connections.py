@@ -1,6 +1,8 @@
-"""Talking to Sonarr, Radarr, Prowlarr, Seerr, Bazarr, Jellyfin and Plex."""
+"""Talking to Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex."""
 
 import requests
+
+import app_info
 
 
 class ServiceError(Exception):
@@ -18,6 +20,9 @@ STATUS = {
     "plex": ("/identity", "X-Plex-Token"),
 }
 
+# Where each app keeps its API
+API = {"sonarr": "/api/v3", "radarr": "/api/v3", "prowlarr": "/api/v1", "seerr": "/api/v1"}
+
 
 class Service:
     def __init__(self, service, label, cfg):
@@ -26,22 +31,32 @@ class Service:
         self.url = getattr(cfg, f"{service}_url")
         self.key = getattr(cfg, f"{service}_api_key")
         self.timeout = cfg.request_timeout
+        self.api = API.get(service, "")
 
-    def get(self, path, **params):
+    def request(self, method, path, body=None, **params):
         header = STATUS[self.service][1]
         try:
-            response = requests.get(self.url + path, params=params, timeout=self.timeout,
-                                    headers={header: self.key, "Accept": "application/json"})
+            response = requests.request(method, self.url + path, params=params or None, json=body, timeout=self.timeout,
+                                        headers={header: self.key, "Accept": "application/json"})
         except requests.RequestException as e:
             raise ServiceError(f"Can't reach {self.label} at {self.url} ({e.__class__.__name__})")
         if response.status_code in (401, 403):
             raise ServiceError(f"{self.label} turned down the {'token' if self.service == 'plex' else 'API key'}")
         if not response.ok:
-            raise ServiceError(f"{self.label} answered {response.status_code} for {path}")
+            raise ServiceError(f"{self.label} answered {response.status_code} for {method} {path}")
+        if not response.content:
+            return None
         try:
             return response.json()
         except ValueError:
             raise ServiceError(f"{self.label} didn't answer with JSON. Is the address right?")
+
+    def get(self, path, **params):
+        return self.request("GET", path, **params)
+
+    def call(self, method, path, body=None):
+        """The app's own API, e.g. sonarr.call("GET", "/tag/detail")."""
+        return self.request(method, self.api + path, body)
 
     def version(self):
         data = self.get(STATUS[self.service][0])
@@ -52,3 +67,12 @@ class Service:
         if self.service == "plex":
             return (data.get("MediaContainer") or {}).get("version", "")
         return data.get("version", "")
+
+
+def connected(cfg):
+    """{service: Service} for every app that's switched on and has an address and key."""
+    services = {}
+    for key, label, *_ in app_info.SERVICES:
+        if getattr(cfg, f"{key}_enabled", False) and getattr(cfg, f"{key}_url", "") and getattr(cfg, f"{key}_api_key", ""):
+            services[key] = Service(key, label, cfg)
+    return services

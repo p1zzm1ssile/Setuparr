@@ -98,25 +98,243 @@ api("/api/session").then((s) => {
 
 // ---------- Dashboard ----------
 
+const SEVERITY = {
+  problem: { label: "Problem", badge: "bad", tile: "bad", many: "Problems" },
+  warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
+  tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
+};
+const AREAS = { all: "Everything", unraid: "Unraid", tags: "Tags", anime: "Anime" };
+let dashArea = "all";
+let showDismissed = false;
+
+function findingCard(f, reload) {
+  const result = el("span", { class: "result", role: "status" });
+  const actions = [];
+  if (f.fix && !f.dismissed) {
+    const button = el("button", { type: "button", class: "primary", text: f.fix.label });
+    button.addEventListener("click", async () => {
+      if (!confirm(f.fix.confirm)) return;
+      button.disabled = true;
+      try {
+        flash(result, true, (await post("/api/fix", { id: f.id })).message);
+        setTimeout(reload, 1500);
+      } catch (e) {
+        flash(result, false, e.message);
+        button.disabled = false;
+      }
+    });
+    actions.push(button);
+  }
+  const dismiss = el("button", { type: "button", text: f.dismissed ? "Show again" : "Dismiss" });
+  dismiss.addEventListener("click", async () => {
+    await post("/api/dismiss", { id: f.id, dismissed: !f.dismissed });
+    reload();
+  });
+  actions.push(dismiss);
+  if (f.link) actions.push(el("a", { href: f.link, target: "_blank", rel: "noopener", text: "TRaSH guide" }));
+
+  return el("div", { class: "panel" },
+    el("div", { class: "row-wrap" },
+      el("span", { class: `badge ${SEVERITY[f.severity].badge}`, text: SEVERITY[f.severity].label }),
+      el("span", { class: "badge", text: f.app })),
+    el("h2", { text: f.title }),
+    el("p", { class: "muted", text: f.detail }),
+    f.items.length ? el("details", {},
+      el("summary", { text: f.item_count > f.items.length ? `Show ${f.items.length} of ${f.item_count}` : `Show ${f.item_count}` }),
+      el("ul", {}, f.items.map((i) => el("li", { text: i })))) : null,
+    f.steps.length ? el("div", {}, el("strong", { text: "How to fix it" }),
+      el("ol", {}, f.steps.map((s) => el("li", { text: s })))) : null,
+    el("div", { class: "card-actions" }, actions, result));
+}
+
 async function showDashboard() {
   const d = await api("/api/dashboard");
+  const r = d.results;
+  const reload = () => showDashboard();
+  const visible = r.findings.filter((f) => (dashArea === "all" || f.area === dashArea) && f.dismissed === showDismissed);
+  const dismissedCount = r.findings.filter((f) => f.dismissed).length;
+  const active = r.findings.filter((f) => !f.dismissed);
   const connected = d.connections.filter((c) => c.enabled);
-  view.replaceChildren(
-    el("h1", { text: "Dashboard" }),
-    el("p", { class: "muted", text: d.tagline }),
+
+  const run = el("button", { type: "button", class: "primary", text: r.running ? "Checking…" : "Run checks", disabled: r.running });
+  run.addEventListener("click", async () => {
+    run.disabled = true;
+    run.textContent = "Checking…";
+    try { await post("/api/run"); } catch (e) { alert(e.message); }
+    const wait = setInterval(async () => {
+      const s = await api("/api/dashboard");
+      if (!s.results.running) { clearInterval(wait); reload(); }
+    }, 1500);
+  });
+
+  const setupNeeded = [];
+  if (!connected.length) {
+    setupNeeded.push(el("li", {}, "Connect Sonarr, Radarr, Prowlarr or Seerr under ",
+      el("a", { href: "#/settings/sonarr", text: "Settings" }), " to check tags and anime."));
+  }
+  if (r.checked && !r.checked.unraid) {
+    setupNeeded.push(el("li", {}, "Add your Unraid Docker templates and share settings on the ",
+      el("a", { href: "#/unraid", text: "Unraid page" }), " to check folder mappings and shares."));
+  }
+
+  // replaceChildren doesn't skip empty parts or flatten lists the way el() does
+  view.replaceChildren(...[
+    el("div", { class: "toolbar" },
+      el("h1", { text: "Dashboard" }),
+      el("span", { class: "spacer" }),
+      el("span", { class: "muted small", text: r.ran_at ? `Last checked ${ago(r.ran_at)}` : "Not checked yet" }),
+      run),
+    setupNeeded.length ? el("div", { class: "notice" }, el("strong", { text: "To check everything" }), el("ul", {}, setupNeeded)) : null,
+    r.errors.length ? el("div", { class: "notice bad" }, el("strong", { text: "Some checks couldn't run" }),
+      el("ul", {}, r.errors.map((e) => el("li", { text: e })))) : null,
+    el("div", { class: "tiles" },
+      Object.entries(SEVERITY).map(([key, s]) => el("div", { class: `tile ${s.tile}` },
+        el("span", { class: "num", text: String(active.filter((f) => f.severity === key).length) }),
+        el("span", { class: "label", text: s.many })))),
+    el("div", { class: "toolbar" },
+      el("div", { class: "segmented", role: "group", "aria-label": "Show" },
+        Object.entries(AREAS).map(([key, label]) => el("button", {
+          type: "button", class: key === dashArea ? "active" : "",
+          text: `${label} (${active.filter((f) => key === "all" || f.area === key).length})`,
+          onclick: () => { dashArea = key; reload(); },
+        }))),
+      dismissedCount ? el("label", { class: "chip" },
+        el("input", { type: "checkbox", checked: showDismissed, onchange: (e) => { showDismissed = e.target.checked; reload(); } }),
+        `Show dismissed (${dismissedCount})`) : null),
+    visible.length ? visible.map((f) => findingCard(f, reload))
+      : el("div", { class: "panel empty", text: !r.ran_at ? "Press Run checks to start."
+        : showDismissed ? "Nothing dismissed here." : "Nothing found here. All good!" }),
+    d.fixes.length ? el("div", { class: "panel" },
+      el("h2", { text: "Recent fixes" }),
+      el("table", {}, el("tbody", {}, d.fixes.map((fix) => {
+        const undo = el("button", { type: "button", text: fix.undone ? "Undone" : "Undo", disabled: fix.undone });
+        undo.addEventListener("click", async () => {
+          if (!confirm(`Undo "${fix.message}"?`)) return;
+          try { alert((await post("/api/undo", { id: fix.id })).message); reload(); } catch (e) { alert(e.message); }
+        });
+        return el("tr", {}, el("td", { class: "muted small", text: when(fix.at) }), el("td", { text: fix.message }), el("td", {}, undo));
+      })))) : null,
     el("div", { class: "panel" },
-      el("h2", { text: "Connections" }),
-      connected.length
-        ? el("p", {}, "Connected to ", connected.map((c) => c.label).join(", "), ". ",
-          el("a", { href: "#/settings/general", text: "Change in Settings" }), ".")
-        : el("p", { class: "muted" }, "Nothing is connected yet. Add your apps under ",
-          el("a", { href: `#/settings/${d.connections[0].key}`, text: "Settings" }),
-          " and press Test connection on each.")),
-    ...d.planned.map((group) => el("div", { class: "panel" },
-      el("h2", { text: group.title }),
-      el("ul", {}, group.items.map((item) => el("li", { text: item }))))),
+      el("h2", { text: "Coming next" }),
+      d.planned.map((group) => el("div", {}, el("strong", { text: group.title }),
+        el("ul", {}, group.items.map((item) => el("li", { text: item })))))),
     el("p", { class: "muted small" }, "Something you'd like it to check? ",
-      el("a", { href: "#/contact", text: "Suggest it" }), "."));
+      el("a", { href: "#/contact", text: "Suggest it" }), "."),
+  ].flat().filter(Boolean));
+  if (r.running) every(2000, async () => { if (!(await api("/api/dashboard")).results.running) reload(); });
+}
+
+// ---------- Unraid ----------
+
+const ROLE_LABEL = { arr: "Library app", client: "Download client", server: "Media server" };
+
+function readAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+    reader.onerror = () => reject(new Error(`${file.name} couldn't be read`));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Only the files Setuparr reads are sent, whatever folder is chosen
+const WANTED = /(\.xml|\.cfg|compose\.ya?ml|\.zip|\.tar|\.tar\.gz|\.tgz)$/i;
+
+async function showUnraid(message) {
+  const d = await api("/api/unraid");
+  const s = d.summary;
+  const result = el("div", { class: "result", role: "status" });
+  if (message) flash(result, true, message);
+  const files = el("input", { type: "file", multiple: true, accept: ".zip,.tar,.gz,.tgz,.xml,.cfg,.yml,.yaml" });
+  const folder = el("input", { type: "file", webkitdirectory: true, multiple: true });
+
+  async function upload(list) {
+    const chosen = [...list].filter((f) => WANTED.test(f.webkitRelativePath || f.name));
+    if (!chosen.length) { flash(result, false, "None of those are Docker templates, share settings or compose files"); return; }
+    result.className = "result muted";
+    result.textContent = `Reading ${chosen.length} file(s)…`;
+    try {
+      const payload = await Promise.all(chosen.map(async (f) => ({ name: f.webkitRelativePath || f.name, data: await readAsBase64(f) })));
+      const r = await post("/api/unraid/upload", { files: payload });
+      showUnraid(`Imported ${r.summary.containers.length} containers and ${r.summary.shares.length} shares. The checks are running.`);
+    } catch (e) {
+      flash(result, false, e.message);
+    }
+  }
+  files.addEventListener("change", () => upload(files.files));
+  folder.addEventListener("change", () => upload(folder.files));
+
+  const fromFolder = el("button", { type: "button", class: "primary", text: "Import from the config folder" });
+  fromFolder.addEventListener("click", async () => {
+    try {
+      const r = await post("/api/unraid/import-folder");
+      showUnraid(`Imported ${r.summary.containers.length} containers and ${r.summary.shares.length} shares, and deleted the file. The checks are running.`);
+    } catch (e) { flash(result, false, e.message); }
+  });
+
+  const command = "cd /boot/config && tar -czf /mnt/user/appdata/setuparr/unraid-config.tar.gz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null)";
+  const commandBox = el("input", { type: "text", readonly: true, value: command, "aria-label": "Command" });
+  const copy = el("button", { type: "button", text: "Copy" });
+  copy.addEventListener("click", async () => {
+    commandBox.select();
+    try { await navigator.clipboard.writeText(command); } catch { document.execCommand("copy"); }
+    copy.textContent = "Copied";
+    setTimeout(() => (copy.textContent = "Copy"), 2000);
+  });
+
+  const content = [
+    el("h1", { text: "Unraid" }),
+    el("p", { class: "muted", text: "Setuparr checks your folder mappings and shares from Unraid's own settings files. It never looks around your server: it reads only what you give it here." }),
+    el("div", { class: "notice" },
+      el("strong", { text: "What's kept: " }),
+      "each container's name, image, network, folder mappings and ports, and its PUID, PGID, UMASK and TZ. ",
+      "Everything else in the files, including passwords and API keys, is dropped as they're read and never saved."),
+    el("div", { class: "panel" },
+      el("h2", { text: "Option 1: from Unraid's terminal (easiest)" }),
+      el("ol", {},
+        el("li", {}, "In Unraid, click the ", el("strong", { text: ">_" }), " terminal icon at the top right."),
+        el("li", {}, "Paste this and press Enter. It packs the templates, share settings and compose files into Setuparr's config folder. If your Setuparr config folder isn't /mnt/user/appdata/setuparr, change that part."),
+        el("li", {}, "Press Import below. Setuparr reads the file, then deletes it so the passwords in it don't stay in appdata.")),
+      el("div", { class: "copy-row" }, commandBox, copy),
+      el("div", { class: "card-actions" }, fromFolder)),
+    el("div", { class: "panel" },
+      el("h2", { text: "Option 2: choose the files" }),
+      el("p", { class: "muted small" }, "Turn on the flash share (Shares > flash > SMB export, read-only is fine), open ",
+        el("code", { text: "\\\\tower\\flash\\config" }), " from your computer, and choose the ",
+        el("code", { text: "plugins\\dockerMan\\templates-user" }), " and ", el("code", { text: "shares" }),
+        " folders, or a zip of them. Only Docker templates, share settings and compose files are sent; everything else is skipped."),
+      el("div", { class: "row-wrap" },
+        el("label", { class: "button" }, "Choose files…", files),
+        el("label", { class: "button" }, "Choose a folder…", folder))),
+    result,
+  ];
+
+  if (s) {
+    const ignore = {};
+    content.push(el("div", { class: "panel" },
+      el("h2", { text: "What was imported" }),
+      el("p", { class: "muted small" }, `Imported ${when(s.imported_at)}. `,
+        "Unraid keeps templates for containers you've removed, so untick any you don't use, or they'll be checked too."),
+      el("table", {},
+        el("thead", {}, el("tr", {}, el("th", { text: "Check" }), el("th", { text: "Container" }), el("th", { text: "Type" }), el("th", { text: "Folder mappings" }))),
+        el("tbody", {}, s.containers.map((c) => el("tr", {},
+          el("td", {}, ignore[c.name] = el("input", { type: "checkbox", checked: !c.ignored, "aria-label": `Check ${c.name}` })),
+          el("td", {}, el("strong", { text: c.name }), el("div", { class: "muted small", text: c.image })),
+          el("td", { text: c.app ? `${c.app} (${ROLE_LABEL[c.role]})` : "Other" }),
+          el("td", { class: "small" }, c.mounts.map((m) => el("div", { text: m }))))))),
+      el("p", { class: "muted small", text: s.shares.length ? `Shares: ${s.shares.join(", ")}` : "No share settings were included." }),
+      el("div", { class: "card-actions" },
+        el("button", { type: "button", class: "primary", text: "Save choices", onclick: async () => {
+          await post("/api/unraid/ignore", { names: Object.entries(ignore).filter(([, box]) => !box.checked).map(([n]) => n) });
+          showUnraid("Saved. The checks are running.");
+        } }),
+        el("button", { type: "button", class: "danger", text: "Forget imported settings", onclick: async () => {
+          if (!confirm("Forget the imported Unraid settings? The Unraid checks stop until you import them again.")) return;
+          await post("/api/unraid/forget");
+          showUnraid("Forgotten.");
+        } }))));
+  }
+  view.replaceChildren(...content);
 }
 
 // ---------- Logs ----------
@@ -382,6 +600,7 @@ async function route() {
     if (name === "logs") await showLogs();
     else if (name === "settings") await showSettings(sub || "general");
     else if (name === "contact") showContact();
+    else if (name === "unraid") await showUnraid();
     else await showDashboard();
   } catch (e) {
     view.replaceChildren(el("div", { class: "notice bad", text: e.message }));
