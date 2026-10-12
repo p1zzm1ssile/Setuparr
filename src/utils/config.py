@@ -24,11 +24,6 @@ import app_info
 load_dotenv()
 
 
-def ensure_http(url):
-    url = (url or "").strip()
-    return url if url.startswith(("http://", "https://")) else "http://" + url
-
-
 def split_labels(value):
     if isinstance(value, list):
         value = ",".join(value)
@@ -101,8 +96,9 @@ FIELDS = [
               env_bool(f"{service.upper()}_ENABLED", default=bool(os.getenv(f"{service.upper()}_API_KEY"))),
               section="Connection"),
             F(f"{service}_url", service, "Address", "text",
-              env_str(f"{service.upper()}_URL", default=f"localhost:{port}"), section="Connection",
-              help=f"IP address or hostname with port, e.g. 192.168.1.10:{port}"),
+              env_str(f"{service.upper()}_URL"), section="Connection", placeholder=f"http://192.168.1.10:{port}",
+              help=f"The full address, starting with http:// or https://, e.g. http://192.168.1.10:{port}. "
+                   "Use your server's IP rather than localhost, which inside a container means the container itself."),
             F(f"{service}_api_key", service, "Token" if service == "plex" else "API key", "secret",
               env_str(f"{service.upper()}_API_KEY"), section="Connection", help=key_help),
         )
@@ -161,8 +157,11 @@ def coerce(field, value):
     value = "" if value is None else str(value).strip()
     if len(value) > 2000:
         raise ValueError("is too long")
-    if t == "text" and field["key"].endswith("_url") and any(c in value for c in " <>\"'"):
-        raise ValueError("isn't a valid address")
+    if t == "text" and field["key"].endswith("_url") and value:
+        if any(c in value for c in " <>\"'"):
+            raise ValueError("isn't a valid address")
+        if not value.lower().startswith(("http://", "https://")):
+            raise ValueError("must start with http:// or https://")
     if field["key"] == "local_networks":
         for item in split_labels(value):
             try:
@@ -190,7 +189,7 @@ def resolve(raw):
     """Every attribute the rest of Setuparr reads, worked out from the raw settings."""
     resolved = dict(raw)
     for service, *_ in app_info.SERVICES:
-        resolved[f"{service}_url"] = ensure_http(raw[f"{service}_url"]).rstrip("/")
+        resolved[f"{service}_url"] = raw[f"{service}_url"].rstrip("/")
     resolved["local_networks"] = parse_networks(raw["local_networks"])
     return resolved
 
