@@ -83,7 +83,7 @@ def test_a_saved_key_is_not_sent_to_a_new_address(server):
     cookie = login_cookie(server)
     service = app_info.SERVICES[0][0]
     response, data = request(server, "PUT", "/api/settings",
-                             {"values": {f"{service}_url": "evil.example:1234"}}, {**HEADER, "Cookie": cookie})
+                             {"values": {f"{service}_url": "http://evil.example:1234"}}, {**HEADER, "Cookie": cookie})
     assert response.status == 400
     assert f"{service}_api_key" in json.loads(data)["errors"]
 
@@ -93,7 +93,7 @@ def test_connection_test_reports_an_unreachable_app(server):
     service = app_info.SERVICES[0][0]
     config.update({"request_timeout": 1})
     response, data = request(server, "POST", "/api/test",
-                             {"target": service, "values": {f"{service}_url": "127.0.0.1:1", f"{service}_api_key": "x"}},
+                             {"target": service, "values": {f"{service}_url": "http://127.0.0.1:1", f"{service}_api_key": "x"}},
                              {**HEADER, "Cookie": cookie})
     result = json.loads(data)
     assert response.status == 200 and result["ok"] is False
@@ -105,3 +105,17 @@ def test_dashboard_lists_every_connection(server):
     response, data = request(server, "GET", "/api/dashboard", headers={"Cookie": cookie})
     keys = [c["key"] for c in json.loads(data)["connections"]]
     assert keys == [s[0] for s in app_info.SERVICES]
+
+
+def test_an_address_must_start_with_http(server):
+    cookie = login_cookie(server)
+    service = app_info.SERVICES[0][0]
+    response, data = request(server, "PUT", "/api/settings",
+                             {"values": {f"{service}_url": "192.168.1.10:8989", f"{service}_api_key": "k"}},
+                             {**HEADER, "Cookie": cookie})
+    assert response.status == 400
+    assert "http://" in json.loads(data)["errors"][f"{service}_url"]
+    response, _ = request(server, "PUT", "/api/settings",
+                          {"values": {f"{service}_url": "https://sonarr.home:8989/", f"{service}_api_key": "k"}},
+                          {**HEADER, "Cookie": cookie})
+    assert response.status == 200

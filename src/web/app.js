@@ -191,7 +191,7 @@ function fieldInput(field, value, onChange) {
       placeholder: value && value.set ? "•••••••• saved (type to replace)" : "Not set" });
   } else {
     input = el("input", { type: field.type === "int" ? "number" : "text", id, value: value ?? "", oninput: onChange,
-      min: field.min, max: field.max, spellcheck: "false" });
+      min: field.min, max: field.max, placeholder: field.placeholder, spellcheck: "false" });
   }
   return {
     node: el("label", { class: "field", for: id }, el("span", { class: "label", text: field.label }), input, help, error),
