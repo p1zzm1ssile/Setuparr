@@ -159,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, dashboard())
             if path == "/api/unraid":
                 snap = runner.snapshot()
-                return self.send(200, {"summary": unraid_summary(snap), "import_names": runner.IMPORT_NAMES})
+                return self.send(200, {"summary": unraid_summary(snap), "leftover": runner.leftover_file()})
             if path == "/api/settings":
                 return self.send(200, {
                     "tabs": config.TABS,
@@ -190,7 +190,12 @@ class Handler(BaseHTTPRequestHandler):
         self.handle_write()
 
     def handle_write(self):
-        path = urlparse(self.path).path
+        url = urlparse(self.path)
+        path = url.path
+
+        # Sent straight from Unraid's terminal with curl, which can't log in: a one-time link instead
+        if path == "/api/unraid/push":
+            return self.unraid_push(parse_qs(url.query).get("token", [""])[0])
 
         # Only accept writes from our own pages: a form on another site
         # can't set this header, and the session cookie is SameSite=Strict too
@@ -285,6 +290,11 @@ class Handler(BaseHTTPRequestHandler):
                     summary = runner.import_from_config_folder()
                 runner.run_in_background()
                 return self.send(200, {"ok": True, "summary": summary})
+            if path == "/api/unraid/token":
+                return self.send(200, {"token": runner.new_push_token(), "minutes": runner.PUSH_SECONDS // 60})
+            if path == "/api/unraid/delete-leftover":
+                runner.delete_leftover()
+                return self.send(200, {"ok": True})
             if path == "/api/unraid/ignore":
                 runner.set_ignored([str(n) for n in data.get("names") or []])
                 runner.run_in_background()
@@ -300,6 +310,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Web UI error on {path} | {e}")
             self.send(500, {"error": str(e)})
+
+
+    def unraid_push(self, token):
+        def text(code, message):
+            self.send(code, message + "\n", "text/plain; charset=utf-8")
+
+        if not runner.use_push_token(token):
+            logger.warning(f"Unraid files sent with a wrong or used link from {self.ip}")
+            return text(403, "Setuparr: that link has been used or has run out. Get a new one on the Unraid page.")
+        length = int(self.headers.get("Content-Length") or 0)
+        if not 0 < length <= 50_000_000:
+            return text(400, "Setuparr: nothing was sent, or it's more than 50 MB.")
+        try:
+            # Read in memory and never written to disk
+            summary = runner.import_files([("unraid.tar.gz", self.rfile.read(length))])
+        except (UploadError, ValueError) as e:
+            return text(400, f"Setuparr: {e}")
+        runner.run_in_background()
+        return text(200, f"Setuparr: read {len(summary['containers'])} containers and {len(summary['shares'])} shares. "
+                         "Nothing was saved on the way. Go back to Setuparr to see the results.")
 
 
 # API helpers

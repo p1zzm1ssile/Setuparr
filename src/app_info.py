@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 

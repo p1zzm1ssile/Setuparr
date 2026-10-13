@@ -5,8 +5,10 @@ A fix is only ever carried out from the server's own stored copy of a
 finding: the browser sends nothing but the finding's id.
 """
 
+import hmac
 import json
 import os
+import secrets
 import threading
 import time
 
@@ -67,6 +69,42 @@ def import_files(files):
     _write(SNAPSHOT_FILE, snap)
     logger.log("ACTION", f"Imported Unraid settings: {len(snap['containers'])} containers, {len(snap['shares'])} shares")
     return unraid.summary(snap)
+
+
+def leftover_file():
+    """An archive from an earlier version's instructions, still sitting in the config folder."""
+    return next((n for n in IMPORT_NAMES if os.path.isfile(os.path.join(config.config_dir, n))), None)
+
+
+def delete_leftover():
+    name = leftover_file()
+    if name:
+        os.remove(os.path.join(config.config_dir, name))
+        logger.info(f"Deleted {name} from the config folder")
+
+
+# One-time links for sending the files straight from Unraid's terminal, so nothing is written to disk
+PUSH_SECONDS = 15 * 60
+_push_tokens = {}
+
+
+def new_push_token():
+    now = time.time()
+    for token, expires in list(_push_tokens.items()):
+        if expires < now:
+            _push_tokens.pop(token, None)
+    token = secrets.token_urlsafe(24)
+    _push_tokens[token] = now + PUSH_SECONDS
+    return token
+
+
+def use_push_token(token):
+    """True once for a valid token, which then stops working."""
+    for known, expires in list(_push_tokens.items()):
+        if hmac.compare_digest(known, token or "") and expires >= time.time():
+            _push_tokens.pop(known, None)
+            return True
+    return False
 
 
 def import_from_config_folder():

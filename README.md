@@ -52,24 +52,29 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 
 ## Giving Setuparr your Unraid settings
 
-Setuparr never looks around your server and doesn't need the Docker socket. It reads only the files you give it, and
-keeps only each container's name, image, network, folder mappings and ports, and its PUID, PGID, UMASK and TZ.
-Everything else in them, including passwords and API keys, is dropped as they're read and never saved.
+Setuparr never looks around your server and doesn't need the Docker socket. It reads only the Unraid settings files
+you send it: the Docker templates, the share settings and Compose Manager's compose files.
 
-**From Unraid's terminal (easiest).** Click the `>_` icon at the top right of Unraid, paste this and press Enter:
+**Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
+is kept: each container's name, image and folder mappings, and its PUID, PGID and UMASK. Everything else (passwords,
+API keys, VPN details, other settings, ports, networks and time zones) is dropped as the files are read and never
+saved. Folder and container names are kept because the checks need them, so if one is named after a person, that name
+is kept too.
 
-```bash
-cd /boot/config && tar -czf /mnt/user/appdata/setuparr/unraid-config.tar.gz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null)
-```
-
-Then press **Import from the config folder** on the Unraid page. Setuparr reads the file and deletes it, so the
-passwords in it don't stay in appdata. Change `/mnt/user/appdata/setuparr` if your config folder is elsewhere.
+**From Unraid's terminal (easiest).** On Setuparr's **Unraid** page, press **Get the command** and copy it. In Unraid,
+click the `>_` icon at the top right, paste it and press Enter. It packs the files and sends them straight to
+Setuparr, so nothing is written to disk on the way. The command works once, for 15 minutes, and the page updates by
+itself when the files arrive.
 
 **Or choose the files.** Export the flash share over SMB (read-only is fine), open `\\tower\flash\config`, and
-choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of them.
+choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of them. Only those files are sent, from
+your browser to Setuparr.
 
-Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Run
-the import again whenever you change a container.
+Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Send
+the files again whenever you change a container.
+
+If you used Setuparr 0.2.0's instructions, an `unraid-config.tar.gz` may still be in Setuparr's config folder. The
+Unraid page offers to read it and delete it, or just delete it.
 
 ## Install on Unraid
 

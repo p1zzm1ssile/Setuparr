@@ -405,3 +405,4 @@ label.button { cursor: pointer; }
 .panel .row-wrap .badge { margin-right: 0.25rem; }
 .panel.empty { text-align: center; }
 .panel .card-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }
+.hidden { display: none !important; }
