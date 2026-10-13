@@ -9,7 +9,7 @@
   <Support>https://github.com/p1zzm1ssile/Setuparr/issues</Support>
   <TemplateURL>https://raw.githubusercontent.com/p1zzm1ssile/unraid-templates/main/templates/setuparr.xml</TemplateURL>
   <Project>https://github.com/p1zzm1ssile/Setuparr</Project>
-  <Overview>Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself. Starts in report-only mode and is set up in its web UI.</Overview>
+  <Overview>Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself. Starts in report-only mode and is set up in its web UI. Free forever: no paid tiers, no Pro account, no subscriptions.</Overview>
   <Category>MediaApp:Other Tools:</Category>
   <WebUI>http://[IP]:[PORT:9893]/</WebUI>
   <Icon>https://raw.githubusercontent.com/p1zzm1ssile/Setuparr/main/src/web/icon.png</Icon>
