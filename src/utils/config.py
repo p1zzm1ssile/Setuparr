@@ -66,6 +66,11 @@ web_port = int(os.getenv("WEB_PORT", app_info.PORT))
 TABS = {"general": "General", **{key: label for key, label, *_ in app_info.SERVICES}}
 
 
+def secret_label(service):
+    """Download clients keep their password where the other apps keep an API key."""
+    return "Token" if service == "plex" else "Password" if service in app_info.LOGINS else "API key"
+
+
 def F(key, tab, label, type, default, help="", section="", **extra):
     """Describe one setting. type is bool, int, text, secret, select or labels."""
     return dict(key=key, tab=tab, label=label, type=type, default=default, help=help, section=section, **extra)
@@ -93,14 +98,17 @@ FIELDS = [
         for service, label, port, key_help in app_info.SERVICES
         for field in (
             F(f"{service}_enabled", service, f"Use {label}", "bool",
-              env_bool(f"{service.upper()}_ENABLED", default=bool(os.getenv(f"{service.upper()}_API_KEY"))),
+              env_bool(f"{service.upper()}_ENABLED", default=bool(os.getenv(f"{service.upper()}_API_KEY") or (
+                  service in app_info.LOGINS and os.getenv(f"{service.upper()}_URL")))),
               section="Connection"),
             F(f"{service}_url", service, "Address", "text",
               env_str(f"{service.upper()}_URL"), section="Connection", placeholder=f"http://192.168.1.10:{port}",
               help=f"The full address, starting with http:// or https://, e.g. http://192.168.1.10:{port}. "
                    "Use your server's IP rather than localhost, which inside a container means the container itself."),
-            F(f"{service}_api_key", service, "Token" if service == "plex" else "API key", "secret",
-              env_str(f"{service.upper()}_API_KEY"), section="Connection", help=key_help),
+            *([F(f"{service}_username", service, "Username", "text",
+                 env_str(f"{service.upper()}_USERNAME"), section="Connection")] if app_info.LOGINS.get(service) else []),
+            F(f"{service}_api_key", service, secret_label(service), "secret",
+              env_str(f"{service.upper()}_API_KEY", f"{service.upper()}_PASSWORD"), section="Connection", help=key_help),
         )
     ],
 ]
