@@ -140,6 +140,14 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 - **Command line:** `docker exec setuparr python healthcheck.py` exits with 0 when healthy, 1 when not.
 - **Docker:** the image includes a `HEALTHCHECK`, so `docker ps` shows `healthy` or `unhealthy`.
 
+## Free forever
+
+Every feature in Setuparr is free and always will be. There are no paid tiers, no Pro account, no subscriptions and no telemetry, and new features will be free too. Services Setuparr works with, like Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex, have their own terms.
+
+## About the developer
+
+I'm an ISO 27001 Lead Auditor with combined-type ADHD, dyslexia and dyscalculia. I can read code and follow its logic and security well, but writing it out myself isn't possible. So I design what Setuparr does and how it works, and use AI as an assistive tool to write the code from that design. I review and test every change before it's released.
+
 ## Contact
 
 Bugs and ideas: [open an issue](https://github.com/p1zzm1ssile/Setuparr/issues/new?title=%5BSetuparr%5D%20). For anything
