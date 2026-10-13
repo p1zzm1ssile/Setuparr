@@ -1,4 +1,4 @@
-"""Talking to Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex."""
+"""Talking to Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex. The download clients are in clients.py."""
 
 import requests
 
@@ -72,10 +72,20 @@ class Service:
         return data.get("version", "")
 
 
+def make(service, label, cfg):
+    if service in app_info.LOGINS:
+        from services.clients import CLIENTS
+        return CLIENTS[service](service, label, cfg)
+    return Service(service, label, cfg)
+
+
 def connected(cfg):
-    """{service: Service} for every app that's switched on and has an address and key."""
+    """{service: Service} for every app that's switched on and has an address and key.
+
+    A download client can be set up to let Setuparr in without a password, so it only needs an address."""
     services = {}
     for key, label, *_ in app_info.SERVICES:
-        if getattr(cfg, f"{key}_enabled", False) and getattr(cfg, f"{key}_url", "") and getattr(cfg, f"{key}_api_key", ""):
-            services[key] = Service(key, label, cfg)
+        has_key = bool(getattr(cfg, f"{key}_api_key", "")) or key in app_info.LOGINS
+        if getattr(cfg, f"{key}_enabled", False) and getattr(cfg, f"{key}_url", "") and has_key:
+            services[key] = make(key, label, cfg)
     return services

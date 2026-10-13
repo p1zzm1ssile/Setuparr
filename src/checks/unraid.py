@@ -421,6 +421,18 @@ def check_shares(shares, media_containers):
             where = location(m["host"])
             if where:
                 used.add(where[1])
+    for name in sorted(used):
+        share = by_name.get(name)
+        if share and share.get("shareUseCache") == "prefer":
+            findings.append(finding(
+                f"share-prefer|{name}", AREA, WARNING, "Unraid",
+                f"The mover fills your cache with the {name} share",
+                f"The {name} share holds downloads or media, and the mover is set to move it from the array to the "
+                "cache. A media library soon outgrows a cache pool, and once the cache is full, downloads fail.",
+                steps=[f"In Shares > {name}, set the primary storage to your cache pool, the secondary storage to the "
+                       "array and the mover action to Cache -> Array (on Unraid before 6.12: Use cache pool: Yes)."],
+                link=TRASH_UNRAID))
+
     if len(used) > 1 and any(c["role"] == "arr" for c in media_containers):
         findings.append(finding(
             "share|split", AREA, TIP, "Unraid",
