@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Jellyfin 10.11 no longer turns down the API key: the key is now sent the way newer Jellyfin expects.
+
 ## 0.2.0
 
 - **Unraid page:** import your Docker templates, share settings and compose files from Unraid's terminal or by choosing
