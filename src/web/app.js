@@ -264,20 +264,33 @@ async function showUnraid(message) {
   files.addEventListener("change", () => upload(files.files));
   folder.addEventListener("change", () => upload(folder.files));
 
-  const fromFolder = el("button", { type: "button", class: "primary", text: "Import from the config folder" });
-  fromFolder.addEventListener("click", async () => {
+  // Option 1: a one-time link, so the files go straight from Unraid to Setuparr and nothing is written to disk
+  const commandBox = el("input", { type: "text", readonly: true, "aria-label": "Command" });
+  const copy = el("button", { type: "button", text: "Copy", disabled: true });
+  const commandRow = el("div", { class: "copy-row hidden" }, commandBox, copy);
+  const getCommand = el("button", { type: "button", class: "primary", text: "Get the command" });
+  const waiting = el("p", { class: "muted small", role: "status" });
+  getCommand.addEventListener("click", async () => {
     try {
-      const r = await post("/api/unraid/import-folder");
-      showUnraid(`Imported ${r.summary.containers.length} containers and ${r.summary.shares.length} shares, and deleted the file. The checks are running.`);
+      const t = await post("/api/unraid/token");
+      commandBox.value = "cd /boot/config && tar -cz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null) | " +
+        `curl -sS --data-binary @- '${location.origin}/api/unraid/push?token=${t.token}'`;
+      commandRow.classList.remove("hidden");
+      copy.disabled = false;
+      getCommand.textContent = "Get a new command";
+      waiting.textContent = `Works once, for ${t.minutes} minutes. Waiting for Unraid to send the files…`;
+      const before = s ? s.imported_at : null;
+      every(3000, async () => {
+        const now = await api("/api/unraid");
+        if (now.summary && now.summary.imported_at !== before) {
+          showUnraid(`Read ${now.summary.containers.length} containers and ${now.summary.shares.length} shares. The checks are running.`);
+        }
+      });
     } catch (e) { flash(result, false, e.message); }
   });
-
-  const command = "cd /boot/config && tar -czf /mnt/user/appdata/setuparr/unraid-config.tar.gz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null)";
-  const commandBox = el("input", { type: "text", readonly: true, value: command, "aria-label": "Command" });
-  const copy = el("button", { type: "button", text: "Copy" });
   copy.addEventListener("click", async () => {
     commandBox.select();
-    try { await navigator.clipboard.writeText(command); } catch { document.execCommand("copy"); }
+    try { await navigator.clipboard.writeText(commandBox.value); } catch { document.execCommand("copy"); }
     copy.textContent = "Copied";
     setTimeout(() => (copy.textContent = "Copy"), 2000);
   });
@@ -285,18 +298,32 @@ async function showUnraid(message) {
   const content = [
     el("h1", { text: "Unraid" }),
     el("p", { class: "muted", text: "Setuparr checks your folder mappings and shares from Unraid's own settings files. It never looks around your server: it reads only what you give it here." }),
+    d.leftover ? el("div", { class: "notice warn" },
+      el("strong", { text: `${d.leftover} is still in Setuparr's config folder. ` }),
+      "It was made by an earlier version's instructions and can hold passwords. Read it and delete it, or just delete it.",
+      el("div", { class: "card-actions" },
+        el("button", { type: "button", class: "primary", text: "Read it, then delete it", onclick: async () => {
+          try {
+            const r = await post("/api/unraid/import-folder");
+            showUnraid(`Read ${r.summary.containers.length} containers and ${r.summary.shares.length} shares, and deleted the file.`);
+          } catch (e) { flash(result, false, e.message); }
+        } }),
+        el("button", { type: "button", class: "danger", text: "Delete it", onclick: async () => {
+          await post("/api/unraid/delete-leftover");
+          showUnraid("Deleted.");
+        } }))) : null,
     el("div", { class: "notice" },
-      el("strong", { text: "What's kept: " }),
-      "each container's name, image, network, folder mappings and ports, and its PUID, PGID, UMASK and TZ. ",
-      "Everything else in the files, including passwords and API keys, is dropped as they're read and never saved."),
+      el("strong", { text: "Passwords, API keys and personal details are removed. " }),
+      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image and folder mappings, and its PUID, PGID and UMASK. ",
+      "Everything else (passwords, API keys, VPN details, other settings, ports, networks and time zones) is dropped as the files are read and never saved. ",
+      "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
     el("div", { class: "panel" },
       el("h2", { text: "Option 1: from Unraid's terminal (easiest)" }),
       el("ol", {},
-        el("li", {}, "In Unraid, click the ", el("strong", { text: ">_" }), " terminal icon at the top right."),
-        el("li", {}, "Paste this and press Enter. It packs the templates, share settings and compose files into Setuparr's config folder. If your Setuparr config folder isn't /mnt/user/appdata/setuparr, change that part."),
-        el("li", {}, "Press Import below. Setuparr reads the file, then deletes it so the passwords in it don't stay in appdata.")),
-      el("div", { class: "copy-row" }, commandBox, copy),
-      el("div", { class: "card-actions" }, fromFolder)),
+        el("li", {}, "Press Get the command, then Copy."),
+        el("li", {}, "In Unraid, click the ", el("strong", { text: ">_" }), " terminal icon at the top right, paste it and press Enter."),
+        el("li", {}, "The files go straight from Unraid to Setuparr: nothing is written to disk on the way, and this page updates by itself.")),
+      el("div", { class: "card-actions" }, getCommand), commandRow, waiting),
     el("div", { class: "panel" },
       el("h2", { text: "Option 2: choose the files" }),
       el("p", { class: "muted small" }, "Turn on the flash share (Shares > flash > SMB export, read-only is fine), open ",
@@ -334,7 +361,7 @@ async function showUnraid(message) {
           showUnraid("Forgotten.");
         } }))));
   }
-  view.replaceChildren(...content);
+  view.replaceChildren(...content.filter(Boolean));
 }
 
 // ---------- Logs ----------

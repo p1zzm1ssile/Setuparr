@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- **Nothing is written to disk any more.** The terminal command on the Unraid page now sends the Unraid files straight
+  to Setuparr with a one-time link (it works once, for 15 minutes), instead of leaving a file in appdata.
+- A leftover `unraid-config.tar.gz` from 0.2.0 can be read and deleted, or just deleted, from the Unraid page.
+- Even less is kept from the Unraid files: ports, networks and time zones are now dropped too, as no check needs them.
+  The Unraid page and README say exactly what's kept.
+
 ## 0.2.1
 
 - Jellyfin 10.11 no longer turns down the API key: the key is now sent the way newer Jellyfin expects.

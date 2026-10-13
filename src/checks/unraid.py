@@ -4,9 +4,10 @@ Setuparr never looks around the server itself. It reads only the files it's
 given: the Docker templates (/boot/config/plugins/dockerMan/templates-user),
 the share settings (/boot/config/shares) and Compose Manager's compose files.
 
-Those files can hold VPN passwords and API keys, so they're read in memory and
-only an allow-list is kept: each container's name, image, network, folder
-mappings, ports, and its PUID, PGID, UMASK and TZ. Nothing else is stored.
+Those files can hold VPN passwords, API keys and other personal details, so
+they're read in memory and only what the checks need is kept: each container's
+name, image and folder mappings, and its PUID, PGID and UMASK. Nothing else is
+stored: not passwords, keys, other variables, ports, networks or time zones.
 """
 
 import io
@@ -22,7 +23,7 @@ import yaml
 from checks import PROBLEM, TIP, TRASH_HARDLINKS, TRASH_UNRAID, WARNING, finding, plural
 
 AREA = "unraid"
-KEPT_VARIABLES = {"PUID", "PGID", "UMASK", "UMASK_SET", "TZ"}
+KEPT_VARIABLES = {"PUID", "PGID", "UMASK", "UMASK_SET"}
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 50 * 1024 * 1024
 MAX_FILES = 5000
@@ -120,13 +121,11 @@ def parse_template(name, data):
     if root.tag != "Container":
         return None
     text = lambda tag: (root.findtext(tag) or "").strip()
-    mounts, ports, variables = [], [], []
+    mounts, variables = [], []
     for c in root.findall("Config"):
         kind, target, value = c.get("Type", ""), (c.get("Target") or "").strip(), (c.text or "").strip()
         if kind == "Path" and value and target:
             mounts.append({"host": value, "container": target, "mode": c.get("Mode", "rw")})
-        elif kind == "Port" and target:
-            ports.append(target)
         elif kind == "Variable":
             variables.append((target, value))
     # Version 1 templates
@@ -141,9 +140,7 @@ def parse_template(name, data):
         "name": container,
         "source": "template",
         "image": text("Repository"),
-        "network": text("Network"),
         "mounts": mounts,
-        "ports": ports,
         "variables": kept_variables(variables),
     }
 
@@ -172,9 +169,7 @@ def parse_compose(name, data):
             "name": spec.get("container_name") or service,
             "source": "compose",
             "image": str(spec.get("image", "")),
-            "network": str(spec.get("network_mode", "")),
             "mounts": mounts,
-            "ports": [str(p) for p in spec.get("ports") or []],
             "variables": kept_variables(pairs),
         })
     return containers
