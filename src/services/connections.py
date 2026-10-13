@@ -34,10 +34,13 @@ class Service:
         self.api = API.get(service, "")
 
     def request(self, method, path, body=None, **params):
-        header = STATUS[self.service][1]
+        headers = {STATUS[self.service][1]: self.key, "Accept": "application/json"}
+        if self.service == "jellyfin":
+            # Jellyfin 10.11 turns the old X-Emby-Token header off by default and wants this one
+            headers["Authorization"] = f'MediaBrowser Token="{self.key}"'
         try:
             response = requests.request(method, self.url + path, params=params or None, json=body, timeout=self.timeout,
-                                        headers={header: self.key, "Accept": "application/json"})
+                                        headers=headers)
         except requests.RequestException as e:
             raise ServiceError(f"Can't reach {self.label} at {self.url} ({e.__class__.__name__})")
         if response.status_code in (401, 403):
