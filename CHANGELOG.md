@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+- **Download clients:** connect qBittorrent, Transmission and Deluge under Settings. Setuparr only reads their settings,
+  and checks where they save downloads, unfinished downloads on another folder mapping, qBittorrent's torrent
+  management mode, pre-allocation on a cached share and networks let in without a password.
+- **Sonarr and Radarr download client checks:** Completed Download Handling off, clients at `localhost`, clients with no
+  category, Sonarr and Radarr sharing a category, and Deluge's Label plugin.
+- **Library checks** in Sonarr and Radarr: root folders they can't reach, hardlinks off, Propers and Repacks against the
+  TRaSH Repack/Proper custom format, and renaming off. Radarr now gets its root folders, profiles and naming read too.
+- **Unraid:** a downloads or media share the mover moves onto the cache.
+
 ## 0.3.0
 
 - **Nothing is written to disk any more.** The terminal command on the Unraid page now sends the Unraid files straight

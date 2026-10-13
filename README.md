@@ -25,6 +25,31 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 - **`/mnt/user` mixed with a disk or pool path** for the same share, a known way to lose data.
 - **PUID, PGID and UMASK** that differ between containers.
 - **appdata or system shares** that can end up on the array, and downloads and media spread over several shares.
+- **The mover filling your cache:** a downloads or media share set to move from the array to the cache.
+
+### Download clients (Sonarr, Radarr, qBittorrent, Transmission, Deluge)
+
+From Sonarr and Radarr's download client settings:
+
+- Completed Download Handling turned off, so nothing gets imported.
+- Download clients reached at `localhost`, which inside a container is the container itself.
+- Download clients with no category, and Sonarr and Radarr sharing one category in the same client.
+- Deluge used with a category while its Label plugin is off.
+
+When you connect qBittorrent, Transmission or Deluge under **Settings** (Setuparr only reads their settings):
+
+- Downloads saved to a folder that isn't in the client's folder mappings, so they stay inside the container (needs
+  your Unraid settings).
+- Unfinished downloads kept in a different folder mapping, so every finished download is copied.
+- qBittorrent: categories that don't choose the folder (Manual torrent management), pre-allocation on a cached share,
+  and networks let in without a password.
+
+### Library (Sonarr, Radarr)
+
+- Root folders Sonarr or Radarr can't reach.
+- Use Hardlinks instead of Copy turned off.
+- Propers and Repacks not set to Do Not Prefer when you use the TRaSH Repack/Proper custom format.
+- Rename Episodes or Rename Movies turned off.
 
 ### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
@@ -47,8 +72,9 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 ### Coming next
 
 - TRaSH guide custom formats, quality profiles, sizes and naming, Prowlarr sync, Jellyfin and Plex settings.
+- SABnzbd and NZBGet folders and categories.
 - Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
-- More **Fix it** buttons, and anime checks for Radarr.
+- More **Fix it** buttons, including for download client settings, and anime checks for Radarr.
 
 ## Giving Setuparr your Unraid settings
 
@@ -81,7 +107,8 @@ Unraid page offers to read it and delete it, or just delete it.
 1. Add the template from [`unraid/setuparr.xml`](unraid/setuparr.xml), or search Community Apps for Setuparr.
 2. Keep the **Config** folder at `/mnt/user/appdata/setuparr`.
 3. Start it, open the web UI (port 9893), and create your login with the setup code from the container's log.
-4. Add your apps under **Settings** (addresses start with `http://`) and press **Test connection** on each.
+4. Add your apps and download clients under **Settings** (addresses start with `http://`) and press **Test connection**
+   on each.
 5. Give it your Unraid settings on the **Unraid** page, then press **Run checks** on the Dashboard.
 
 ## Install with Docker
@@ -120,7 +147,7 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 
 ## Login and security
 
-> ⚠️ **Keep Setuparr on your home network.** It can change the settings of Sonarr, Radarr, Prowlarr and Seerr and holds their API keys. We don't recommend putting it behind a reverse proxy
+> ⚠️ **Keep Setuparr on your home network.** It can change the settings of Sonarr, Radarr, Prowlarr and Seerr and holds their API keys and your download clients' passwords. We don't recommend putting it behind a reverse proxy
 > (Nginx Proxy Manager, SWAG, Traefik, Cloudflare Tunnel and the like) for access from outside your network. To reach
 > it remotely, use a VPN such as WireGuard or Tailscale.
 
@@ -129,7 +156,7 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 - **Skip login on my local network** (Settings > General) lets devices on the networks you list in without a password.
   It never applies to requests that arrive through a reverse proxy.
 - Changing an app's address needs its API key entered again, so a saved key can't be sent somewhere new.
-- Saved API keys are never sent back to the browser, and `settings.json` and `auth.json` are only readable by the
+- Saved API keys and passwords are never sent back to the browser, and `settings.json` and `auth.json` are only readable by the
   account Setuparr runs as.
 - **Forgotten your password?** Delete `auth.json` from the config folder and restart Setuparr. It will ask you to create
   a login again, with a new setup code in the log. Your settings are kept.
