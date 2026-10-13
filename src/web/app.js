@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", tags: "Tags", anime: "Anime" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", tags: "Tags", anime: "Anime" };
 let dashArea = "all";
 let showDismissed = false;
 
@@ -169,8 +169,8 @@ async function showDashboard() {
 
   const setupNeeded = [];
   if (!connected.length) {
-    setupNeeded.push(el("li", {}, "Connect Sonarr, Radarr, Prowlarr or Seerr under ",
-      el("a", { href: "#/settings/sonarr", text: "Settings" }), " to check tags and anime."));
+    setupNeeded.push(el("li", {}, "Connect Sonarr, Radarr, Prowlarr, Seerr or your download clients under ",
+      el("a", { href: "#/settings/sonarr", text: "Settings" }), " to check them."));
   }
   if (r.checked && !r.checked.unraid) {
     setupNeeded.push(el("li", {}, "Add your Unraid Docker templates and share settings on the ",

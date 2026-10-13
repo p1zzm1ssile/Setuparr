@@ -12,8 +12,9 @@ import secrets
 import threading
 import time
 
+import app_info
 import utils.config as config
-from checks import SEVERITY_ORDER, anime, tags, unraid
+from checks import SEVERITY_ORDER, anime, downloads, library, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -144,12 +145,22 @@ def fetch_arr(arr, kind):
         "indexers": arr.call("GET", "/indexer"),
         "clients": arr.call("GET", "/downloadclient"),
         "items": arr.call("GET", "/series" if kind == "sonarr" else "/movie"),
+        "roots": arr.call("GET", "/rootfolder"),
+        "profiles": arr.call("GET", "/qualityprofile"),
+        "naming": arr.call("GET", "/config/naming"),
     }
-    if kind == "sonarr":
-        data["roots"] = arr.call("GET", "/rootfolder")
-        data["profiles"] = arr.call("GET", "/qualityprofile")
-        data["naming"] = arr.call("GET", "/config/naming")
+    # Only the library and download client checks need these, and Sonarr v3 has no custom formats
+    for key, path in (("media", "/config/mediamanagement"), ("handling", "/config/downloadclient"),
+                      ("formats", "/customformat")):
+        try:
+            data[key] = arr.call("GET", path)
+        except ServiceError:
+            data[key] = None
     return data
+
+
+def fetch_client(client):
+    return {"label": client.label, "settings": client.settings()}
 
 
 def fetch_prowlarr(p):
@@ -179,7 +190,8 @@ def run():
         services = connected(config)
         fetched = {}
         fetchers = {"sonarr": lambda s: fetch_arr(s, "sonarr"), "radarr": lambda s: fetch_arr(s, "radarr"),
-                    "prowlarr": fetch_prowlarr, "seerr": fetch_seerr}
+                    "prowlarr": fetch_prowlarr, "seerr": fetch_seerr,
+                    **{key: fetch_client for key in app_info.LOGINS}}
         for key, fetch in fetchers.items():
             if key in services:
                 try:
@@ -197,9 +209,16 @@ def run():
         snap = snapshot()
         if snap:
             run_check("Unraid", unraid.check, snap)
+        clients = {key: fetched[key] for key in app_info.LOGINS if key in fetched}
         for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")):
             if key in fetched:
                 run_check(f"{label} tags", tags.check_arr, key, label, fetched[key])
+                run_check(f"{label} library", library.check, key, label, fetched[key])
+                run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
+        run_check("shared categories", downloads.check_shared_categories,
+                  {key: (label, fetched[key]) for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")) if key in fetched})
+        for key, client in clients.items():
+            run_check(client["label"], downloads.check_client, key, client["label"], client["settings"], snap)
         if "prowlarr" in fetched:
             run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
         if "seerr" in fetched:

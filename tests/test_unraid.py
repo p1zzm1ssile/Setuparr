@@ -161,3 +161,8 @@ services:
 def test_nothing_useful_uploaded():
     with pytest.raises(unraid.UploadError):
         unraid.build_snapshot(unraid.read_upload([("notes.txt", b"hello")]))
+
+
+def test_the_mover_filling_the_cache_with_media():
+    _, findings = run(GOOD[:4] + [share("data", "prefer")])
+    assert titles(findings) == ["The mover fills your cache with the data share"]
