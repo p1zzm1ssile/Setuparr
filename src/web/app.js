@@ -139,6 +139,8 @@ function findingCard(f, reload) {
       el("span", { class: "badge", text: f.app })),
     el("h2", { text: f.title }),
     el("p", { class: "muted", text: f.detail }),
+    f.unraid_sent ? el("p", { class: "muted small" }, `From the Unraid settings sent ${ago(f.unraid_sent)}. Changed a container since? `,
+      el("a", { href: "#/unraid", text: "Send them again" }), " and this updates.") : null,
     f.items.length ? el("details", {},
       el("summary", { text: f.item_count > f.items.length ? `Show ${f.items.length} of ${f.item_count}` : `Show ${f.item_count}` }),
       el("ul", {}, f.items.map((i) => el("li", { text: i })))) : null,

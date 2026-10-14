@@ -107,7 +107,7 @@ def servers():
 
 
 def client(key, url, password="right", username="admin"):
-    cfg = SimpleNamespace(**{f"{key}_url": url, f"{key}_username": username, f"{key}_api_key": password,
+    cfg = SimpleNamespace(**{f"{key}_url": url, f"{key}_username": username, f"{key}_password": password,
                              "request_timeout": 5})
     return CLIENTS[key](key, key.capitalize(), cfg)
 
@@ -144,7 +144,7 @@ def test_a_wrong_password(servers, key, message):
 
 
 def test_a_client_without_a_password_is_still_connected():
-    cfg = SimpleNamespace(qbittorrent_enabled=True, qbittorrent_url="http://192.168.1.10:8080", qbittorrent_api_key="",
+    cfg = SimpleNamespace(qbittorrent_enabled=True, qbittorrent_url="http://192.168.1.10:8080", qbittorrent_password="",
                           qbittorrent_username="", request_timeout=5)
     assert list(connected(cfg)) == ["qbittorrent"]
 

@@ -389,7 +389,7 @@ def test_connection(target, values):
         cfg = config.preview(values)
         if not getattr(cfg, f"{target}_url"):
             return {"ok": False, "message": "Enter the address first, e.g. http://192.168.1.10"}
-        if not getattr(cfg, f"{target}_api_key") and target not in app_info.LOGINS:
+        if not getattr(cfg, app_info.secret_key(target)) and target not in app_info.LOGINS:
             return {"ok": False, "message": f"Enter the {'token' if target == 'plex' else 'API key'} first"}
         return {"ok": True, "message": f"Connected to {label} {make(target, label, cfg).version()}".rstrip()}
     except (ServiceError, ValueError) as e:

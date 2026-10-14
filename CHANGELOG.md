@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1
+
+- Download client passwords are saved as `qbittorrent_password`, `transmission_password` and `deluge_password` in
+  `settings.json`, not under an API key name. Passwords saved by 0.4.0 are moved over when Setuparr starts.
+- Findings that come from your Unraid settings now say when those settings were sent, with a link to send them again.
+  They don't change after you change a container until you do.
+- Apps Setuparr can't read from are written to the log too, not only shown on the Dashboard.
+
 ## 0.4.0
 
 - **Download clients:** connect qBittorrent, Transmission and Deluge under Settings. Setuparr only reads their settings,
