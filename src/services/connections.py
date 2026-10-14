@@ -85,7 +85,7 @@ def connected(cfg):
     A download client can be set up to let Setuparr in without a password, so it only needs an address."""
     services = {}
     for key, label, *_ in app_info.SERVICES:
-        has_key = bool(getattr(cfg, f"{key}_api_key", "")) or key in app_info.LOGINS
+        has_key = bool(getattr(cfg, app_info.secret_key(key), "")) or key in app_info.LOGINS
         if getattr(cfg, f"{key}_enabled", False) and getattr(cfg, f"{key}_url", "") and has_key:
             services[key] = make(key, label, cfg)
     return services

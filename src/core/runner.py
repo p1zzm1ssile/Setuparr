@@ -197,6 +197,7 @@ def run():
                 try:
                     fetched[key] = fetch(services[key])
                 except ServiceError as e:
+                    logger.warning(f"Couldn't read from {key}: {e}")
                     errors.append(str(e))
 
         def run_check(name, fn, *args):

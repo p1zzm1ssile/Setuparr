@@ -279,6 +279,14 @@ def check(snapshot):
     findings += check_mixed_paths(containers)
     findings += check_ids(arrs + clients + [c for c in containers if c["role"] == "server"])
     findings += check_shares(snapshot["shares"], arrs + clients)
+    return sent(snapshot, findings)
+
+
+def sent(snapshot, findings):
+    """Mark findings that come from the Unraid settings with when they were sent, since they don't change until
+    the settings are sent again."""
+    for f in findings:
+        f["unraid_sent"] = snapshot.get("imported_at")
     return findings
 
 
