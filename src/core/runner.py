@@ -39,7 +39,7 @@ def _read(path, default):
 def _write(path, data):
     os.makedirs(config.config_dir, exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(data, f, indent=1)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
