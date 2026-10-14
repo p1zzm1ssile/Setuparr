@@ -171,6 +171,8 @@ def check_client(service, label, s, snapshot=None):
                 steps=[f"In {label}, go to Tools > Options > Downloads and turn off Pre-allocate disk space for all files."],
                 link=TRASH_QBITTORRENT))
 
+        unraid.sent(snapshot, findings)
+
     if s.get("automatic") is False and s["categories"]:
         findings.append(finding(
             "manual-mode", AREA, TIP, label,
