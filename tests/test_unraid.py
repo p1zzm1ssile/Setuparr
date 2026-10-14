@@ -166,3 +166,15 @@ def test_nothing_useful_uploaded():
 def test_the_mover_filling_the_cache_with_media():
     _, findings = run(GOOD[:4] + [share("data", "prefer")])
     assert titles(findings) == ["The mover fills your cache with the data share"]
+
+
+def test_findings_say_when_the_unraid_settings_were_sent_and_clear_once_sent_again():
+    old_radarr = template("radarr", "ghcr.io/hotio/radarr", [("/mnt/user/data", "/data"), ("/mnt/user/data/films", "/films"),
+                                                             ("/mnt/user/data/torrents", "/torrents")])
+    snap = unraid.build_snapshot(unraid.read_upload(GOOD[:2] + [old_radarr] + GOOD[3:]))
+    snap["imported_at"] = 1760392974
+    findings = unraid.check(snap)
+    assert "Radarr copies every download instead of hardlinking it" in titles(findings)
+    assert all(f["unraid_sent"] == 1760392974 for f in findings)
+    _, findings = run(GOOD)
+    assert findings == []

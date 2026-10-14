@@ -98,7 +98,7 @@ FIELDS = [
         for service, label, port, key_help in app_info.SERVICES
         for field in (
             F(f"{service}_enabled", service, f"Use {label}", "bool",
-              env_bool(f"{service.upper()}_ENABLED", default=bool(os.getenv(f"{service.upper()}_API_KEY") or (
+              env_bool(f"{service.upper()}_ENABLED", default=bool(os.getenv(app_info.secret_key(service).upper()) or (
                   service in app_info.LOGINS and os.getenv(f"{service.upper()}_URL")))),
               section="Connection"),
             F(f"{service}_url", service, "Address", "text",
@@ -107,8 +107,8 @@ FIELDS = [
                    "Use your server's IP rather than localhost, which inside a container means the container itself."),
             *([F(f"{service}_username", service, "Username", "text",
                  env_str(f"{service.upper()}_USERNAME"), section="Connection")] if app_info.LOGINS.get(service) else []),
-            F(f"{service}_api_key", service, secret_label(service), "secret",
-              env_str(f"{service.upper()}_API_KEY", f"{service.upper()}_PASSWORD"), section="Connection", help=key_help),
+            F(app_info.secret_key(service), service, secret_label(service), "secret",
+              env_str(app_info.secret_key(service).upper()), section="Connection", help=key_help),
         )
     ],
 ]
@@ -118,7 +118,10 @@ SECRET_KEYS = {f["key"] for f in FIELDS if f["type"] == "secret"}
 
 # The address each secret is sent to. A saved secret is never reused with a new
 # address, or anyone with access could send it to a server of their choosing.
-SECRET_URLS = {f"{service}_api_key": f"{service}_url" for service, *_ in app_info.SERVICES}
+SECRET_URLS = {app_info.secret_key(service): f"{service}_url" for service, *_ in app_info.SERVICES}
+
+# Settings that were renamed: {old name: new name}. 0.4.0 saved download client passwords as *_api_key.
+RENAMED = {f"{service}_api_key": app_info.secret_key(service) for service in app_info.LOGINS}
 
 
 def secrets_needing_reentry(changes: dict) -> dict:
@@ -228,6 +231,11 @@ def load():
                 load_error = f"settings.json couldn't be read ({e}). It was moved to {broken} and defaults are being used"
                 saved = {}
 
+        renamed = {old: new for old, new in RENAMED.items() if old in saved}
+        for old, new in renamed.items():
+            value = saved.pop(old)
+            saved.setdefault(new, value)
+
         merged = {f["key"]: f["default"] for f in FIELDS}
         for key, value in saved.items():
             if key in FIELDS_BY_KEY:
@@ -238,7 +246,7 @@ def load():
         values = merged
         apply(globals_namespace, values)
 
-        if not os.path.exists(settings_file):
+        if renamed or not os.path.exists(settings_file):
             _write(values)
 
 

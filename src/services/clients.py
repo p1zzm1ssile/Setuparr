@@ -16,6 +16,8 @@ import itertools
 
 import requests
 
+import app_info
+
 from services.connections import ServiceError
 
 
@@ -25,7 +27,7 @@ class Client:
         self.label = label
         self.url = getattr(cfg, f"{service}_url")
         self.username = getattr(cfg, f"{service}_username", "")
-        self.password = getattr(cfg, f"{service}_api_key")
+        self.password = getattr(cfg, app_info.secret_key(service))
         self.timeout = cfg.request_timeout
         self.session = requests.Session()
 

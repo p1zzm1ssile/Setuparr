@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 
@@ -23,6 +23,11 @@ SERVICES = [
 
 # Download clients log in with a password rather than an API key. True: they want a username too.
 LOGINS = {"qbittorrent": True, "transmission": True, "deluge": False}
+
+
+def secret_key(service):
+    """The setting that holds an app's API key, or a download client's password."""
+    return f"{service}_password" if service in LOGINS else f"{service}_api_key"
 
 # Shown on the Dashboard until each check is ready
 PLANNED = [
