@@ -42,10 +42,10 @@ def archive():
     return buf.getvalue()
 
 
-def push(port, token, body):
+def push(port, token, body, headers=None):
     import http.client
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    conn.request("POST", f"/api/unraid/push?token={token}", body=body)
+    conn.request("POST", f"/api/unraid/push?token={token}", body=body, headers=headers or {})
     response = conn.getresponse()
     return response.status, response.read().decode()
 
@@ -69,6 +69,17 @@ def test_files_sent_from_the_terminal_are_read_once_and_nothing_else_is_kept(ser
 
     status, text = push(server, token, archive())
     assert status == 403 and "used" in text
+
+
+def test_the_terminal_command_sends_the_unraid_version_and_pci_ids(server):
+    cookie = login_cookie(server)
+    _, data = request(server, "POST", "/api/unraid/token", {}, {**HEADER, "Cookie": cookie})
+    status, _ = push(server, json.loads(data)["token"], archive(),
+                     {"X-Unraid-Version": 'version="7.1.4"', "X-Hardware": "0300:8086:4680 0200:10ec:8125 "})
+    assert status == 200
+    saved = json.loads(open(runner.SNAPSHOT_FILE).read())
+    assert saved["unraid_version"] == "7.1.4"
+    assert [d["vendor"] for d in saved["hardware"]] == ["8086", "10ec"]
 
 
 def test_a_made_up_link_is_refused(server):

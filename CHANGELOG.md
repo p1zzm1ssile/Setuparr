@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0
+
+- **More Unraid checks, from Unraid's own docs and Fix Common Problems as well as TRaSH:**
+  - Hard link support (Tunable (support Hard Links)) turned off in Global Share Settings.
+  - appdata going through Unraid's slower FUSE layer when it could be an exclusive share.
+  - Docker's image or folder on the array, or Docker's folder going through the FUSE layer.
+  - macvlan with bridging on, which crashes Unraid 6.12.10 and earlier.
+- **Plugins:** plugins and containers that Community Applications has deprecated or blacklisted (its moderation list
+  is downloaded once a day), and Fix Common Problems or Appdata Backup not installed.
+- **Hardware:** Nvidia, Intel and AMD GPUs, Realtek network cards and Coral accelerators without their driver plugin,
+  and Plex, Jellyfin or Emby not given the GPU for transcoding.
+- The terminal command on the Unraid page now also sends `docker.cfg`, `share.cfg`, `network.cfg` and the plugin
+  files, the Unraid version, and `lspci -n`'s PCI IDs. Only the settings these checks use are kept, never IP addresses.
+  **Get the command again** and run it to get the new checks.
+
 ## 0.4.2
 
 - **qBittorrent 5.2 works.** qBittorrent 5.2 answers a correct sign-in with no text, where older versions said "Ok.",
