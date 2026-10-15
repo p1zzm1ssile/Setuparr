@@ -324,7 +324,8 @@ class Handler(BaseHTTPRequestHandler):
             return text(400, "Setuparr: nothing was sent, or it's more than 50 MB.")
         try:
             # Read in memory and never written to disk
-            summary = runner.import_files([("unraid.tar.gz", self.rfile.read(length))])
+            summary = runner.import_files([("unraid.tar.gz", self.rfile.read(length))],
+                                          self.headers.get("X-Hardware"), self.headers.get("X-Unraid-Version"))
         except (UploadError, ValueError) as e:
             return text(400, f"Setuparr: {e}")
         runner.run_in_background()
