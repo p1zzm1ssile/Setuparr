@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- **qBittorrent 5.2 works.** qBittorrent 5.2 answers a correct sign-in with no text, where older versions said "Ok.",
+  so Setuparr said it had turned down the username or password even when they were right. Both answers are now
+  understood, as is 5.2's way of saying a password is wrong.
+
 ## 0.4.1
 
 - Download client passwords are saved as `qbittorrent_password`, `transmission_password` and `deluge_password` in
