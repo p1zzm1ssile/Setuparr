@@ -35,7 +35,7 @@ class QBittorrent(Fake):
             return self.answer(200, b"Ok." if ok else b"Fails.", [("Set-Cookie", "SID=abc; path=/")] if ok else [])
 
     def do_GET(self):
-        if self.headers.get("Cookie") != "SID=abc":
+        if self.headers.get("Cookie") not in ("SID=abc", "QBT_SID_8080=abc"):
             return self.answer(403, b"Forbidden")
         if self.path == "/api/v2/app/version":
             return self.answer(200, b"v5.0.0")
@@ -47,6 +47,16 @@ class QBittorrent(Fake):
         if self.path == "/api/v2/torrents/categories":
             return self.answer(200, {"radarr": {"name": "radarr", "savePath": "/data/torrents/movies"},
                                      "tv-sonarr": {"name": "tv-sonarr", "savePath": ""}})
+
+
+class QBittorrent52(QBittorrent):
+    """qBittorrent 5.2 answers a sign-in with 204 and no text, or 401 for a wrong password."""
+
+    def do_POST(self):
+        if self.path == "/api/v2/auth/login":
+            if self.body() == b"username=admin&password=right" and self.headers.get("Referer"):
+                return self.answer(204, b"", [("Set-Cookie", "QBT_SID_8080=abc; HttpOnly; SameSite=Strict; path=/")])
+            return self.answer(401, b"Unauthorized")
 
 
 class Transmission(Fake):
@@ -97,7 +107,8 @@ class Deluge(Fake):
 @pytest.fixture(scope="module")
 def servers():
     started = {}
-    for key, handler in (("qbittorrent", QBittorrent), ("transmission", Transmission), ("deluge", Deluge)):
+    for key, handler in (("qbittorrent", QBittorrent), ("qbittorrent52", QBittorrent52), ("transmission", Transmission),
+                         ("deluge", Deluge)):
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         started[key] = (server, f"http://127.0.0.1:{server.server_address[1]}")
@@ -118,6 +129,12 @@ def test_qbittorrent(servers):
     assert c.settings() == {"save_path": "/data/torrents", "incomplete_path": "/data/torrents/incomplete",
                             "categories": {"radarr": "/data/torrents/movies", "tv-sonarr": ""}, "automatic": False,
                             "labels": None, "preallocate": True, "no_login_networks": ["192.168.1.0/24", "10.0.0.0/8"]}
+
+
+def test_qbittorrent_5_2_signs_in(servers):
+    assert client("qbittorrent", servers["qbittorrent52"]).version() == "v5.0.0"
+    with pytest.raises(ServiceError, match="turned down the username or password"):
+        client("qbittorrent", servers["qbittorrent52"], password="wrong").version()
 
 
 def test_transmission_sends_back_its_session_id(servers):

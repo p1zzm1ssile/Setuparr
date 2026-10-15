@@ -62,8 +62,10 @@ class QBittorrent(Client):
 
     def get(self, path):
         if not self.logged_in and self.password:
+            # Up to qBittorrent 5.1 a sign-in answers 200 with "Ok." or "Fails.". From 5.2 it answers 204 with no
+            # text when signed in, and 401 for a wrong password.
             response = self.send("POST", "/api/v2/auth/login", data={"username": self.username, "password": self.password})
-            if not response.ok or response.text.strip() != "Ok.":
+            if not response.ok or response.text.strip() == "Fails.":
                 raise self.turned_down()
             self.logged_in = True
         response = self.send("GET", path)
