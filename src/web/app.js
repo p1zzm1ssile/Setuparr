@@ -275,8 +275,13 @@ async function showUnraid(message) {
   getCommand.addEventListener("click", async () => {
     try {
       const t = await post("/api/unraid/token");
-      commandBox.value = "cd /boot/config && tar -cz plugins/dockerMan/templates-user shares $(ls -d plugins/compose.manager/projects 2>/dev/null) | " +
-        `curl -sS --data-binary @- '${location.origin}/api/unraid/push?token=${t.token}'`;
+      // Also sends the Unraid version and lspci -n's PCI IDs (class:vendor:device, no names), for the version and
+      // hardware checks
+      commandBox.value = "cd /boot/config && tar -cz plugins/dockerMan/templates-user shares " +
+        "$(ls -d docker.cfg share.cfg network.cfg plugins/*.plg plugins/compose.manager/projects 2>/dev/null) | " +
+        `curl -sS --data-binary @- -H "X-Unraid-Version: $(cat /etc/unraid-version)" ` +
+        `-H "X-Hardware: $(lspci -n | awk '{print $2 $3}' | tr '\\n' ' ')" ` +
+        `'${location.origin}/api/unraid/push?token=${t.token}'`;
       commandRow.classList.remove("hidden");
       copy.disabled = false;
       getCommand.textContent = "Get a new command";
@@ -316,8 +321,9 @@ async function showUnraid(message) {
         } }))) : null,
     el("div", { class: "notice" },
       el("strong", { text: "Passwords, API keys and personal details are removed. " }),
-      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image and folder mappings, and its PUID, PGID and UMASK. ",
-      "Everything else (passwords, API keys, VPN details, other settings, ports, networks and time zones) is dropped as the files are read and never saved. ",
+      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image and folder mappings, its PUID, PGID and UMASK, and whether it's given a GPU or its own IP address; ",
+      "the few Docker, share and network settings it checks; the names of your plugins and where they came from; your Unraid version; and the PCI IDs of your devices, which say what kind of GPU and network card you have. ",
+      "Everything else (passwords, API keys, VPN details, IP addresses, other settings, ports, network names and time zones) is dropped as the files are read and never saved. ",
       "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
     el("div", { class: "panel" },
       el("h2", { text: "Option 1: from Unraid's terminal (easiest)" }),
@@ -331,7 +337,10 @@ async function showUnraid(message) {
       el("p", { class: "muted small" }, "Turn on the flash share (Shares > flash > SMB export, read-only is fine), open ",
         el("code", { text: "\\\\tower\\flash\\config" }), " from your computer, and choose the ",
         el("code", { text: "plugins\\dockerMan\\templates-user" }), " and ", el("code", { text: "shares" }),
-        " folders, or a zip of them. Only Docker templates, share settings and compose files are sent; everything else is skipped."),
+        " folders, or a zip of them. Add ", el("code", { text: "docker.cfg" }), ", ", el("code", { text: "share.cfg" }), ", ",
+        el("code", { text: "network.cfg" }), " and the ", el("code", { text: ".plg" }), " files in ", el("code", { text: "plugins" }),
+        " for the Docker, share and plugin checks. Only those files are sent; everything else is skipped. ",
+        "The GPU, network card and Unraid version checks need the terminal command."),
       el("div", { class: "row-wrap" },
         el("label", { class: "button" }, "Choose files…", files),
         el("label", { class: "button" }, "Choose a folder…", folder))),
@@ -352,6 +361,12 @@ async function showUnraid(message) {
           el("td", { text: c.app ? `${c.app} (${ROLE_LABEL[c.role]})` : "Other" }),
           el("td", { class: "small" }, c.mounts.map((m) => el("div", { text: m }))))))),
       el("p", { class: "muted small", text: s.shares.length ? `Shares: ${s.shares.join(", ")}` : "No share settings were included." }),
+      el("p", { class: "muted small", text: [
+        s.settings && s.settings.length ? `Unraid settings: ${s.settings.join(", ")}.` : "No Docker, share or network settings were included.",
+        s.plugins && s.plugins.length ? `${s.plugins.length} plugins.` : "No plugins were included.",
+        s.hardware != null ? `${s.hardware} devices.` : "No hardware list (it's only sent by the terminal command).",
+        s.unraid_version ? `Unraid ${s.unraid_version}.` : "",
+      ].filter(Boolean).join(" ") }),
       el("div", { class: "card-actions" },
         el("button", { type: "button", class: "primary", text: "Save choices", onclick: async () => {
           await post("/api/unraid/ignore", { names: Object.entries(ignore).filter(([, box]) => !box.checked).map(([n]) => n) });
