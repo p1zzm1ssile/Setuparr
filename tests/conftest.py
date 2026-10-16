@@ -7,3 +7,9 @@ os.environ["CONFIG_DIR"] = tempfile.mkdtemp(prefix="setuparr-test-config-")
 os.environ["LOG_OUTPUT"] = "file"
 os.environ["WEB_PORT"] = "0"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+# The checks never download Community Applications' moderation list in the tests; test_unraid tests the real one
+from core import runner  # noqa: E402
+
+REAL_MODERATION = runner.moderation
+runner.moderation = lambda: None

@@ -2,7 +2,7 @@
 
 # Setuparr
 
-Checks your Unraid media setup against the TRaSH guides, then fixes what doesn't match with one button, or shows you how to fix it yourself.
+Checks your Unraid media setup against the TRaSH guides and Unraid's own advice, then fixes what doesn't match with one button, or shows you how to fix it yourself.
 
 It only reads from your apps. Nothing is changed until you press **Fix it**, and every fix can be undone from the
 Dashboard.
@@ -26,6 +26,25 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 - **PUID, PGID and UMASK** that differ between containers.
 - **appdata or system shares** that can end up on the array, and downloads and media spread over several shares.
 - **The mover filling your cache:** a downloads or media share set to move from the array to the cache.
+- **Hard link support turned off** in Global Share Settings (Tunable (support Hard Links)), the TRaSH guide's first step.
+- **appdata through the FUSE layer:** appdata reached through `/mnt/user` when it could be an exclusive share, which
+  Unraid 6.12 added so containers skip the slower FUSE layer.
+- **Where Docker lives:** `docker.img` or Docker's folder on the array, or Docker's folder going through the FUSE layer,
+  against Unraid's own advice on Settings > Docker.
+- **macvlan with bridging on** when containers have their own IP address, which Unraid's 6.12.4 release notes say
+  crashes the server on 6.12.10 and earlier.
+
+### Plugins and hardware
+
+From the plugins and PCI IDs the terminal command sends:
+
+- Plugins and containers that Community Applications' moderators have **deprecated or blacklisted**, the same list Fix
+  Common Problems uses. Setuparr downloads it from GitHub once a day.
+- **Fix Common Problems** or **Appdata Backup** not installed.
+- An **Nvidia, Intel or AMD GPU** without its driver plugin (Nvidia Driver, Intel GPU TOP, Radeon TOP), and **Plex,
+  Jellyfin or Emby not given the GPU**, so every transcode runs on the CPU.
+- A **Realtek RTL8125, RTL8126 or RTL8168** network card on Unraid's built-in driver, and a **Coral** accelerator with
+  no driver.
 
 ### Download clients (Sonarr, Radarr, qBittorrent, Transmission, Deluge)
 
@@ -81,10 +100,15 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
 Setuparr never looks around your server and doesn't need the Docker socket. It reads only the Unraid settings files
 you send it: the Docker templates, the share settings and Compose Manager's compose files.
 
+It also reads Unraid's `docker.cfg`, `share.cfg` and `network.cfg` and the installed plugins' `.plg` files, and the
+terminal command adds your Unraid version and the PCI IDs from `lspci -n` (numbers like `0300:8086:4680`, which say what
+kind of GPU and network card you have).
+
 **Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
-is kept: each container's name, image and folder mappings, and its PUID, PGID and UMASK. Everything else (passwords,
-API keys, VPN details, other settings, ports, networks and time zones) is dropped as the files are read and never
-saved. Folder and container names are kept because the checks need them, so if one is named after a person, that name
+is kept: each container's name, image and folder mappings, its PUID, PGID and UMASK, and whether it's given a GPU or
+its own IP address; the few Docker, share and network settings the checks look at; each plugin's file name and the
+address it was installed from. Everything else (passwords, API keys, VPN details, IP addresses, other settings, ports,
+network names and time zones) is dropped as the files are read and never saved. Folder and container names are kept because the checks need them, so if one is named after a person, that name
 is kept too.
 
 **From Unraid's terminal (easiest).** On Setuparr's **Unraid** page, press **Get the command** and copy it. In Unraid,
@@ -93,8 +117,9 @@ Setuparr, so nothing is written to disk on the way. The command works once, for 
 itself when the files arrive.
 
 **Or choose the files.** Export the flash share over SMB (read-only is fine), open `\\tower\flash\config`, and
-choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of them. Only those files are sent, from
-your browser to Setuparr.
+choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of them. Add `docker.cfg`, `share.cfg`,
+`network.cfg` and the `.plg` files in `plugins` for the Docker, share and plugin checks. Only those files are sent, from
+your browser to Setuparr. The GPU, network card and Unraid version checks need the terminal command.
 
 Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Send
 the files again whenever you change a container.

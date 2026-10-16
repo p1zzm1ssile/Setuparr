@@ -12,6 +12,8 @@ import secrets
 import threading
 import time
 
+import requests
+
 import app_info
 import utils.config as config
 from checks import SEVERITY_ORDER, anime, downloads, library, tags, unraid
@@ -21,6 +23,8 @@ from utils.logger import logger
 RESULTS_FILE = os.path.join(config.config_dir, "results.json")
 SNAPSHOT_FILE = os.path.join(config.config_dir, "unraid.json")
 FIXES_FILE = os.path.join(config.config_dir, "fixes.json")
+MODERATION_FILE = os.path.join(config.config_dir, "moderation.json")
+MODERATION_SECONDS = 24 * 3600
 # Dropped into the config folder from Unraid's terminal, imported, then deleted
 IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip", "unraid-config.tar")
 
@@ -61,9 +65,10 @@ def snapshot():
     return _read(SNAPSHOT_FILE, None)
 
 
-def import_files(files):
-    """[(name, bytes)] from an upload or the config folder. Returns a summary."""
-    snap = unraid.build_snapshot(unraid.read_upload(files))
+def import_files(files, hardware=None, version=None):
+    """[(name, bytes)] from an upload or the config folder, and what the terminal command adds: lspci -n's PCI IDs
+    and the Unraid version. Returns a summary."""
+    snap = unraid.build_snapshot(unraid.read_upload(files), hardware, version)
     old = snapshot() or {}
     snap["ignored"] = [n for n in old.get("ignored", []) if any(c["name"] == n for c in snap["containers"])]
     snap["imported_at"] = time.time()
@@ -82,6 +87,24 @@ def delete_leftover():
     if name:
         os.remove(os.path.join(config.config_dir, name))
         logger.info(f"Deleted {name} from the config folder")
+
+
+def moderation():
+    """Community Applications' list of deprecated and blacklisted plugins and containers, downloaded at most once a
+    day. Only the entries the checks use are kept. None if it has never been downloaded and can't be now."""
+    cached = _read(MODERATION_FILE, None)
+    if cached and time.time() - cached.get("fetched_at", 0) < MODERATION_SECONDS:
+        return cached["entries"]
+    try:
+        r = requests.get(unraid.MODERATION_URL, timeout=20)
+        r.raise_for_status()
+        entries = {k: {f: v[f] for f in ("Blacklist", "Deprecated", "ModeratorComment") if f in v}
+                   for k, v in r.json().items() if isinstance(v, dict) and (v.get("Blacklist") or v.get("Deprecated"))}
+        _write(MODERATION_FILE, {"fetched_at": time.time(), "entries": entries})
+        return entries
+    except (requests.RequestException, OSError, ValueError, AttributeError) as e:
+        logger.warning(f"Couldn't download Community Applications' moderation list | {e}")
+        return cached["entries"] if cached else None
 
 
 # One-time links for sending the files straight from Unraid's terminal, so nothing is written to disk
@@ -209,7 +232,8 @@ def run():
 
         snap = snapshot()
         if snap:
-            run_check("Unraid", unraid.check, snap)
+            run_check("Unraid", unraid.check, snap,
+                      moderation() if snap.get("plugins") or snap.get("containers") else None)
         clients = {key: fetched[key] for key in app_info.LOGINS if key in fetched}
         for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")):
             if key in fetched:
