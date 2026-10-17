@@ -12,6 +12,7 @@ SERVICES = [
     ("radarr", "Radarr", 7878, 'Settings > General > Security in Radarr'),
     ("prowlarr", "Prowlarr", 9696, 'Settings > General > Security in Prowlarr'),
     ("seerr", "Seerr", 5055, 'Settings > General > API Key in Jellyseerr or Overseerr'),
+    ("bazarr", "Bazarr", 6767, 'Settings > General > Security > API Key in Bazarr'),
     ("jellyfin", "Jellyfin", 8096, 'Dashboard > API Keys in Jellyfin'),
     ("plex", "Plex", 32400, 'Your Plex token. Plex\'s support article "Finding an authentication token" shows where to find it.'),
     ("qbittorrent", "qBittorrent", 8080, "The password for qBittorrent's web UI. Leave it empty if qBittorrent lets Setuparr in "
