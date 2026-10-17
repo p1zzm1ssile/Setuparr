@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import SEVERITY_ORDER, anime, downloads, library, tags, unraid
+from checks import SEVERITY_ORDER, anime, arr, downloads, library, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -172,9 +172,9 @@ def fetch_arr(arr, kind):
         "profiles": arr.call("GET", "/qualityprofile"),
         "naming": arr.call("GET", "/config/naming"),
     }
-    # Only the library and download client checks need these, and Sonarr v3 has no custom formats
+    # Only some checks need these, and Sonarr v3 has no custom formats
     for key, path in (("media", "/config/mediamanagement"), ("handling", "/config/downloadclient"),
-                      ("formats", "/customformat")):
+                      ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host")):
         try:
             data[key] = arr.call("GET", path)
         except ServiceError:
@@ -239,6 +239,7 @@ def run():
             if key in fetched:
                 run_check(f"{label} tags", tags.check_arr, key, label, fetched[key])
                 run_check(f"{label} library", library.check, key, label, fetched[key])
+                run_check(f"{label} profiles and health", arr.check, key, label, fetched[key], snap)
                 run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
         run_check("shared categories", downloads.check_shared_categories,
                   {key: (label, fetched[key]) for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")) if key in fetched})

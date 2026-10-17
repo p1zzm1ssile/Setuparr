@@ -84,6 +84,17 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
 - Propers and Repacks not set to Do Not Prefer when you use the TRaSH Repack/Proper custom format.
 - Rename Episodes or Rename Movies turned off.
 
+### Health, security, profiles and backups (Sonarr, Radarr)
+
+- Anything on Sonarr or Radarr's own **System > Status** health list, like failing indexers or an unreachable
+  download client.
+- **No login**, or no password asked on your network, which a reverse proxy on the same server opens to everyone.
+- **Set Permissions** turned on, which fights Unraid's PUID, PGID and UMASK.
+- **Quality profiles:** no custom formats at all, a profile where every custom format scores 0, a Minimum Custom
+  Format Score no release can reach, Upgrade Until set to the lowest quality, and upgrades turned off when custom
+  formats would pick better releases.
+- **Backups** turned off, or saved to a folder that isn't mapped, so they're lost when the container is updated.
+
 ### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
