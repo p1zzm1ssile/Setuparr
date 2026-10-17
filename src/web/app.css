@@ -406,3 +406,9 @@ label.button { cursor: pointer; }
 .panel.empty { text-align: center; }
 .panel .card-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }
 .hidden { display: none !important; }
+
+/* Guides */
+.guide dt { margin-top: 18px; display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.guide dt:first-child { margin-top: 0; }
+.guide dd { margin: 4px 0 0; }
+.guide dd p { margin: 4px 0; }

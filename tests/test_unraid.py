@@ -535,3 +535,19 @@ def test_plugins_made_for_another_unraid_version():
     assert titles(findings) == ["2 plugins aren't made for Unraid 7.1.4"]
     assert findings[0]["items"] == ["new.plg: needs Unraid 7.2.0 or later", "old.plg: made for Unraid 6.11.9 and earlier"]
     assert run_with(files)[1] == []
+
+
+def test_restart_policies_and_privileged_containers():
+    files = GOOD + [port_template("gluetun", "qmcgaw/gluetun", extra="--cap-add=NET_ADMIN --restart=unless-stopped"),
+                    port_template("tool", "x/tool", extra="--privileged=true -e PASSWORD=hunter2")]
+    files.append((files[0][0], files[0][1].replace(b"</Container>", b"<Privileged>true</Privileged></Container>")))
+    files = files[1:]
+    snap, findings = run_with(files)
+    assert "hunter2" not in json.dumps(snap)
+    flags = {c["name"]: c["flags"] for c in snap["containers"]}
+    assert flags["gluetun"] == ["--cap-add", "--restart"] and flags["tool"] == ["--privileged"]
+    by = {f["title"]: f for f in findings}
+    assert sorted(by) == ["1 container uses Docker's --restart instead of Unraid's Autostart",
+                          "qbittorrent runs as Privileged", "tool runs as Privileged"]
+    assert by["qbittorrent runs as Privileged"]["severity"] == "warning" and by["tool runs as Privileged"]["severity"] == "tip"
+    assert by["tool runs as Privileged"]["link"] == "#/guides"
