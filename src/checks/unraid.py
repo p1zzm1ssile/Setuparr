@@ -78,6 +78,8 @@ BUILT_IN_NETWORKS = {"", "bridge", "host", "none"}
 
 UNRAID_EXCLUSIVE = "https://unraid.net/blog/6-12-0-stable"
 UNRAID_MACVLAN = "https://docs.unraid.net/unraid-os/release-notes/6.12.4/"
+# Setuparr's own Extra Parameters guide
+GUIDE = "#/guides"
 UNRAID_DOCS = "https://docs.unraid.net/unraid-os/manual/"
 UNRAID_PARITY = "https://docs.unraid.net/unraid-os/manual/storage-management/#parity-checks"
 UNRAID_NOTIFY = "https://docs.unraid.net/unraid-os/manual/additional-settings/#notification-settings"
@@ -218,10 +220,18 @@ def parse_template(name, data):
         "network_of": network.split(":", 1)[1].strip() if kind == "container" else None,
         "ports": published_ports(ports, kind),
         "gpu": gpu_access(devices, text("ExtraParams"), dict(variables)),
+        "flags": extra_flags(text("ExtraParams")),
+        "privileged": text("Privileged").lower() == "true" or "--privileged" in extra_flags(text("ExtraParams")),
         # Unraid gives every container its own time zone unless the template sets TZ. Only whether the two match is
         # kept (in build_snapshot), never the time zone.
         "_tz": dict(variables).get("TZ") or None,
     }
+
+
+def extra_flags(extra):
+    """The names of the flags in Extra Parameters (--restart, --memory...), never their values, which can hold
+    passwords."""
+    return sorted(set(re.findall(r"(?:^|\s)(--[a-z][a-z-]*)", extra or "")))[:50]
 
 
 def network_kind(network):
@@ -303,6 +313,7 @@ def parse_compose(name, data):
             "ports": [] if own_ip else published_ports(compose_ports(spec.get("ports")), kind),
             "gpu": gpu_access([str(d) for d in spec.get("devices") or []], "", variables,
                               spec.get("runtime") == "nvidia" or reserved_nvidia),
+            "privileged": spec.get("privileged") is True,
             # Compose doesn't add Unraid's time zone, so a container without TZ runs on UTC
             "_tz": str(tz) if tz else "UTC",
         })
@@ -596,6 +607,7 @@ def check(snapshot, moderation=None):
     findings += check_ports(containers, settings.get("ident"))
     findings += check_start_order(containers, snapshot.get("autostart"))
     findings += check_docker_logs(settings.get("docker"))
+    findings += check_extra_parameters(containers)
     findings += check_disks(snapshot.get("disks"))
     findings += check_parity_schedule(snapshot.get("disks"), settings.get("dynamix"))
     findings += check_alerts(settings.get("dynamix"))
@@ -990,6 +1002,37 @@ def check_docker_logs(docker):
                "Set Docker LOG rotation to Enabled (Unraid's default keeps one 50 MB file per container), then start "
                "Docker again."],
         link=UNRAID_DOCS)]
+
+
+def check_extra_parameters(containers):
+    findings = []
+    restart = sorted(c["name"] for c in containers if "--restart" in (c.get("flags") or []))
+    if restart:
+        findings.append(finding(
+            "restart", AREA, WARNING, "Unraid",
+            f"{plural(len(restart), 'container')} {'uses' if len(restart) == 1 else 'use'} Docker's --restart instead of "
+            "Unraid's Autostart",
+            "A --restart policy in Extra Parameters makes Docker start the container as soon as Docker starts, before "
+            "Unraid's own Autostart. It ignores your start order and wait times, so a container that goes through a "
+            "VPN container can start before it, and it starts again even after you stop it for maintenance.",
+            steps=["Edit each container below in Advanced View, remove --restart=... from Extra Parameters, and turn on "
+                   "Autostart on the Docker page instead."],
+            items=restart, link=GUIDE))
+    for c in containers:
+        if not c.get("privileged"):
+            continue
+        media = bool(c.get("role"))
+        findings.append(finding(
+            f"privileged|{c['name']}", AREA, WARNING if media else TIP, "Unraid", f"{c['name']} runs as Privileged",
+            f"Privileged gives {c['name']} full control of Unraid: every disk, device and kernel setting. If the app "
+            "is ever compromised, so is the server. "
+            + ("Media apps never need it." if media else
+               "Few containers need it; most only need one device or capability."),
+            steps=[f"Edit {c['name']}, switch Privileged off (or remove --privileged from Extra Parameters).",
+                   "If it then stops working, give it only what it needs, e.g. --device=/dev/dri for a GPU, or "
+                   "--cap-add=NET_ADMIN and --device=/dev/net/tun for a VPN. Setuparr's Guides page lists these."],
+            link=GUIDE))
+    return findings
 
 
 # Disks, parity, alerts and time

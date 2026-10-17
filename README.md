@@ -37,6 +37,7 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 - **Start order:** a container that goes through another container's network (qBittorrent through Gluetun) but starts
   before it, or starts when the other doesn't, and media containers that don't start by themselves.
 - **Docker's log rotation** turned off, so logs can fill docker.img.
+- **Extra Parameters:** Docker's `--restart` used instead of Unraid's Autostart, and containers running as Privileged.
 - **Disks:** a disk that's disabled, emulated, missing or unmountable, read or write errors, no parity drive, no
   scheduled parity check, and a pool or the flash drive over 90% full.
 - **Alerts** only shown in the web UI, so a failed disk goes unnoticed.
@@ -124,6 +125,12 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
 - An anime episode format without the absolute episode number.
 - Indexers with no anime categories.
 - Seerr with no anime root folder or profile, so requested anime lands in your TV setup.
+
+### Guides
+
+The **Guides** page explains the Extra Parameters you can give a container in Unraid's Advanced View: GPUs, memory and
+CPU limits, networking (like sending a container through a VPN container), logs and health checks, and permissions,
+with what each does, when to use it and an example.
 
 ### Coming next
 
