@@ -19,6 +19,9 @@
   `disks.ini` and Docker's start order. Only what the checks use is kept: never disk serial numbers, IP addresses,
   email settings or time zones. Host ports are now kept too. **Get the command again** and run it to get the new checks.
 - Choosing files by hand now accepts `.plg` files, which were left out before.
+- **Sonarr and Radarr:** their own health warnings, no login or no password on your network, Set Permissions turned
+  on, quality profiles (no custom formats, all scores 0, a minimum score nothing can reach, no upgrades) and backups
+  that are off or saved where they're lost on update. Shown under **Sonarr & Radarr** on the Dashboard.
 
 ## 0.5.0
 
