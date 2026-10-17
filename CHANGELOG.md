@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0
+
+- **More of Unraid's own settings are checked:**
+  - **Ports:** two containers on the same host port, or a container on the port Unraid's web UI uses.
+  - **Start order:** a container that goes through another's network (like qBittorrent through Gluetun) starting
+    before it, or without it, and media containers that don't start by themselves.
+  - **Disks:** disabled, emulated, missing or unmountable disks, read and write errors, no parity drive, parity checks
+    not scheduled, and a pool or the flash drive over 90% full.
+  - **Docker:** log rotation turned off.
+  - **Alerts** only shown in the web UI, **NTP** turned off, and containers on a different **time zone** from Unraid.
+  - **appdata shared over SMB** so anyone on your network can read it.
+  - **The mover:** running every hour, downloads or media shares with no minimum free space, or never leaving the cache.
+  - **Appdata Backup:** no schedule or destination, backups on the same pool as appdata, the flash drive not backed up,
+    and media containers skipped.
+  - **Plugins** made for a different Unraid version, and containers given a GPU the server doesn't have.
+- The terminal command on the Unraid page now also sends `ident.cfg`, `dynamix.cfg`, Appdata Backup's settings,
+  `disks.ini` and Docker's start order. Only what the checks use is kept: never disk serial numbers, IP addresses,
+  email settings or time zones. Host ports are now kept too. **Get the command again** and run it to get the new checks.
+- Choosing files by hand now accepts `.plg` files, which were left out before.
+
 ## 0.5.0
 
 - **More Unraid checks, from Unraid's own docs and Fix Common Problems as well as TRaSH:**
