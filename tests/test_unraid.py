@@ -320,8 +320,9 @@ def test_nvidia_gpu_needs_the_driver_and_runtime():
         gpu_template("jellyfin", "jellyfin/jellyfin", extra="--runtime=nvidia")]
     _, findings = run_with(files, hardware="0300:10de:2204")
     assert sorted(titles(findings)) == ["Jellyfin can't use your GPU for transcoding", "Your Nvidia GPU has no driver"]
-    # No GPU, or a server-board's own graphics, means nothing to say
-    assert run_with(files, hardware="0300:1a03:2000 0600:8086:4660")[1] == []
+    # A server-board's own graphics needs no driver, but Plex can't start with the Nvidia runtime and no Nvidia GPU
+    assert titles(run_with(files, hardware="0300:1a03:2000 0600:8086:4660")[1]) == [
+        "plex is given an Nvidia GPU this server doesn't have"]
     # Not sent at all (chosen by hand): not guessed at
     assert run_with(files)[1] == []
 
@@ -362,3 +363,175 @@ def test_moderation_list_is_downloaded_once_a_day(monkeypatch):
     monkeypatch.setattr(runner.requests, "get", offline)
     os.remove(runner.MODERATION_FILE)
     assert REAL_MODERATION() is None
+
+
+# Ports, start order, disks, time, alerts, the mover and backups
+
+
+def port_template(name, image, ports=(), network="bridge", extra="", variables=()):
+    configs = "".join(f'<Config Type="Port" Target="{c}" Mode="{m}">{h}</Config>' for h, c, m in ports)
+    configs += "".join(f'<Config Type="Variable" Target="{k}">{v}</Config>' for k, v in variables)
+    xml = (f'<?xml version="1.0"?><Container version="2"><Name>{name}</Name><Repository>{image}</Repository>'
+           f'<Network>{network}</Network><ExtraParams>{extra}</ExtraParams>{configs}</Container>')
+    return (f"plugins/dockerMan/templates-user/my-{name}.xml", xml.encode())
+
+
+def ini(path, sections):
+    text = "".join(f'["{name}"]\n' + "".join(f'{k}="{v}"\n' for k, v in values.items()) for name, values in sections.items())
+    return (path, text.encode())
+
+
+def test_ports_taken_twice_or_by_unraids_web_ui():
+    files = GOOD + [
+        port_template("nginx", "jc21/nginx-proxy-manager", [("80", "8080", "tcp"), ("8181", "8181", "tcp")]),
+        port_template("ombi", "lscr.io/linuxserver/ombi", [("8181", "3579", "tcp"), ("8181", "3579", "udp")]),
+        port_template("pihole", "pihole/pihole", [("80", "80", "tcp")], network="br0"),
+        port_template("gluetun", "qmcgaw/gluetun", [("8989", "8989", "tcp")]),
+    ]
+    snap, findings = run_with(files)
+    assert sorted(titles(findings)) == ["2 containers want port 8181", "nginx uses port 80, which Unraid's web UI needs"]
+    # Containers with their own IP address don't take Unraid's ports
+    assert next(c for c in snap["containers"] if c["name"] == "pihole")["ports"] == []
+    # Unraid's web UI moved to another port: 80 is free
+    _, findings = run_with(files + [cfg("ident.cfg", PORT="81", USE_SSL="no", NAME="Tower")])
+    assert titles(findings) == ["2 containers want port 8181"]
+
+
+def test_compose_ports():
+    compose = (b"services:\n  a:\n    image: x/a\n    ports:\n      - '127.0.0.1:9000:80'\n      - '9001'\n"
+               b"      - target: 53\n        published: 5353\n        protocol: udp\n"
+               b"  b:\n    image: x/b\n    network_mode: host\n    ports: ['9000:9000']\n")
+    snap, _ = run_with([("compose.manager/projects/x/compose.yaml", compose)])
+    ports = {c["name"]: c["ports"] for c in snap["containers"]}
+    assert ports == {"a": ["5353/udp", "9000/tcp"], "b": ["9000/tcp"]}
+
+
+def test_containers_that_use_a_vpn_containers_network_start_after_it():
+    files = GOOD + [port_template("gluetun", "qmcgaw/gluetun"),
+                    port_template("qbit-vpn", "lscr.io/linuxserver/qbittorrent", network="container:gluetun"),
+                    port_template("prowlarr", "lscr.io/linuxserver/prowlarr", extra="--net=container:gluetun")]
+    autostart = ("var/lib/docker/unraid-autostart", b"qbit-vpn\nprowlarr 5\ngluetun 10\nqbittorrent\nsonarr\nradarr\n")
+    snap, findings = run_with(files + [autostart])
+    assert {c["name"]: c["network_of"] for c in snap["containers"]}["qbit-vpn"] == "gluetun"
+    assert sorted(titles(findings)) == ["prowlarr starts before gluetun, whose network it uses",
+                                        "qbit-vpn starts before gluetun, whose network it uses"]
+    _, findings = run_with(files + [("unraid-autostart", b"qbit-vpn\n")])
+    assert sorted(titles(findings)) == ["3 media containers don't start by themselves",
+                                        "qbit-vpn starts by itself, but gluetun, whose network it uses, doesn't"]
+    # Not sent: nothing guessed
+    assert run_with(files)[1] == []
+
+
+def test_docker_log_rotation_off():
+    _, findings = run_with(GOOD + [cfg("docker.cfg", DOCKER_ENABLED="yes", DOCKER_LOG_ROTATION="no")])
+    assert titles(findings) == ["Docker's log rotation is turned off"]
+
+
+DISKS = {
+    "parity": {"idx": "0", "name": "parity", "device": "sdb", "id": "WDC_WD80EFAX_SERIAL123", "type": "Parity",
+               "status": "DISK_OK", "numErrors": "0"},
+    "disk1": {"name": "disk1", "id": "ST8000_SERIAL456", "type": "Data", "status": "DISK_OK", "fsStatus": "Mounted",
+              "fsSize": "7811939620", "fsFree": "1000", "numErrors": "0"},
+    "cache": {"name": "cache", "id": "Samsung_SERIAL789", "type": "Cache", "status": "DISK_OK", "fsStatus": "Mounted",
+              "fsSize": "1000000", "fsFree": "500000", "numErrors": "0"},
+    "cache2": {"name": "cache2", "type": "Cache", "status": "DISK_OK", "fsSize": "1000000", "fsFree": "0"},
+    "flash": {"name": "flash", "id": "SanDisk_SERIAL000", "type": "Flash", "status": "DISK_OK", "fsSize": "100",
+              "fsFree": "50"},
+}
+
+
+def test_healthy_disks_have_nothing_to_report_and_serials_arent_kept():
+    snap, findings = run_with(GOOD + [ini("var/local/emhttp/disks.ini", DISKS)])
+    assert findings == []
+    assert "SERIAL" not in json.dumps(snap) and "sdb" not in json.dumps(snap)
+
+
+def test_disk_problems():
+    disks = {**DISKS,
+             "parity": {**DISKS["parity"], "status": "DISK_NP_DSBL"},
+             "disk1": {**DISKS["disk1"], "status": "DISK_DSBL", "numErrors": "12"},
+             "disk2": {"name": "disk2", "type": "Data", "status": "DISK_OK", "fsStatus": "Unmountable: Wrong or no file system"},
+             "cache": {**DISKS["cache"], "fsFree": "40000"},
+             "flash": {**DISKS["flash"], "fsFree": "5"}}
+    _, findings = run_with(GOOD + [ini("disks.ini", disks)])
+    assert sorted(titles(findings)) == [
+        "1 disk had read or write errors", "Disk 1 is disabled, and its contents are being emulated from parity",
+        "Disk 2 is unmountable", "The cache pool is 96% full", "The flash drive is 95% full",
+        "Your array has no parity drive"]
+
+
+def test_parity_checks_and_alerts():
+    dynamix = ("plugins/dynamix/dynamix.cfg",
+               b'[display]\ndate="%c"\n[parity]\nmode="0"\n[notify]\nalert="1"\n[ssmtp]\nAuthPass="hunter2"\n')
+    snap, findings = run_with(GOOD + [ini("disks.ini", DISKS), dynamix])
+    assert "hunter2" not in json.dumps(snap)
+    assert sorted(titles(findings)) == ["Parity checks aren't scheduled",
+                                        "Unraid only tells you about failing disks in its web UI"]
+    # Monthly checks, and alerts by email (2) as well as in the browser (1)
+    dynamix = ("plugins/dynamix/dynamix.cfg", b'[parity]\nmode="3"\n[notify]\nalert="3"\n')
+    assert run_with(GOOD + [ini("disks.ini", DISKS), dynamix])[1] == []
+
+
+def test_time():
+    files = GOOD + [port_template("bazarr", "lscr.io/linuxserver/bazarr", variables=[("TZ", "America/New_York")]),
+                    port_template("plex", "plexinc/pms-docker", variables=[("TZ", "Europe/London")]),
+                    ("compose.manager/projects/x/compose.yaml", b"services:\n  homarr:\n    image: x/homarr\n"),
+                    cfg("ident.cfg", USE_NTP="no", timeZone="Europe/London", NTP_SERVER1="192.168.1.1")]
+    snap, findings = run_with(files)
+    text = json.dumps(snap)
+    assert "Europe/London" not in text and "New_York" not in text and "192.168" not in text
+    assert sorted(titles(findings)) == ["2 containers run on a different time zone from Unraid",
+                                        "Unraid's clock isn't set from the internet"]
+    # Compose containers without TZ run on UTC; templates without it get Unraid's
+    assert next(f["items"] for f in findings if "time zone" in f["title"]) == ["bazarr", "homarr"]
+
+
+def test_appdata_shared_publicly():
+    files = GOOD[:3] + [("shares/appdata.cfg", b'shareUseCache="only"\nshareExport="e"\nshareSecurity="public"\n'), GOOD[4]]
+    assert titles(run_with(files)[1]) == ["Anyone on your network can read appdata"]
+    files[3] = ("shares/appdata.cfg", b'shareUseCache="only"\nshareExport="e"\nshareSecurity="private"\n')
+    assert run_with(files)[1] == []
+
+
+def test_mover():
+    files = GOOD[:4] + [("shares/data.cfg", b'shareUseCache="yes"\nshareFloor="0"\n'),
+                        cfg("share.cfg", shareMoverSchedule="0 * * * *")]
+    assert sorted(titles(run_with(files)[1])) == ["The data share has no minimum free space", "The mover runs every hour"]
+    files = GOOD[:4] + [share("data", "only")]
+    assert titles(run_with(files)[1]) == ["The data share never leaves the cache"]
+    # A server with no array: the pool is meant to hold everything
+    no_array = {k: v for k, v in DISKS.items() if v["type"] not in ("Data", "Parity")}
+    assert run_with(files + [ini("disks.ini", no_array)])[1] == []
+
+
+def backup(**config):
+    return ("plugins/appdata.backup/config.json", json.dumps(config).encode())
+
+
+def test_appdata_backup():
+    files = GOOD + HAVE_PLUGINS
+    good = dict(destination="/mnt/user/backups/appdata", backupFrequency="weekly", flashBackup="yes",
+                preRunScript="/boot/secret.sh", containerSettings={"sonarr": {"skip": "no"}})
+    snap, findings = run_with(files + [backup(**good)])
+    assert findings == [] and "secret.sh" not in json.dumps(snap)
+    _, findings = run_with(files + [backup(**{**good, "backupFrequency": "disabled", "flashBackup": "no",
+                                              "destination": "/mnt/cache/backups",
+                                              "containerSettings": {"sonarr": {"skip": "yes"}, "x": {"skip": "yes"}}})])
+    assert sorted(titles(findings)) == ["Appdata Backup never runs by itself", "Appdata Backup skips 1 media container",
+                                        "Appdata backups are on the same pool as appdata", "The flash drive isn't backed up"]
+    assert titles(run_with(files + [backup(destination="")])[1]) == ["Appdata Backup has nowhere to save backups"]
+    # Settings left behind by a plugin that's been removed are ignored
+    _, findings = run_with(GOOD + [HAVE_PLUGINS[0], backup(destination="")])
+    assert titles(findings) == ["The Appdata Backup plugin isn't installed"]
+
+
+def test_plugins_made_for_another_unraid_version():
+    def versioned(file, **attrs):
+        extra = "".join(f' {k}="{v}"' for k, v in attrs.items())
+        return (f"plugins/{file}", f'<?xml version="1.0"?><PLUGIN name="x" pluginURL="https://example.com/{file}"{extra}/>'.encode())
+    files = GOOD + HAVE_PLUGINS + [versioned("old.plg", max="6.11.9"), versioned("new.plg", min="7.2.0"),
+                                   versioned("fine.plg", min="6.12.0", max="7.9")]
+    snap, findings = run_with(files, version="7.1.4")
+    assert titles(findings) == ["2 plugins aren't made for Unraid 7.1.4"]
+    assert findings[0]["items"] == ["new.plg: needs Unraid 7.2.0 or later", "old.plg: made for Unraid 6.11.9 and earlier"]
+    assert run_with(files)[1] == []

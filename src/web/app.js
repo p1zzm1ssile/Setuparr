@@ -240,14 +240,14 @@ function readAsBase64(file) {
 }
 
 // Only the files Setuparr reads are sent, whatever folder is chosen
-const WANTED = /(\.xml|\.cfg|compose\.ya?ml|\.zip|\.tar|\.tar\.gz|\.tgz)$/i;
+const WANTED = /(\.xml|\.cfg|\.plg|compose\.ya?ml|appdata\.backup[^/]*\/config\.json|\.zip|\.tar|\.tar\.gz|\.tgz)$/i;
 
 async function showUnraid(message) {
   const d = await api("/api/unraid");
   const s = d.summary;
   const result = el("div", { class: "result", role: "status" });
   if (message) flash(result, true, message);
-  const files = el("input", { type: "file", multiple: true, accept: ".zip,.tar,.gz,.tgz,.xml,.cfg,.yml,.yaml" });
+  const files = el("input", { type: "file", multiple: true, accept: ".zip,.tar,.gz,.tgz,.xml,.cfg,.plg,.yml,.yaml" });
   const folder = el("input", { type: "file", webkitdirectory: true, multiple: true });
 
   async function upload(list) {
@@ -276,9 +276,12 @@ async function showUnraid(message) {
     try {
       const t = await post("/api/unraid/token");
       // Also sends the Unraid version and lspci -n's PCI IDs (class:vendor:device, no names), for the version and
-      // hardware checks
+      // hardware checks, and the disks' state and the containers' start order from outside /boot/config
       commandBox.value = "cd /boot/config && tar -cz plugins/dockerMan/templates-user shares " +
-        "$(ls -d docker.cfg share.cfg network.cfg plugins/*.plg plugins/compose.manager/projects 2>/dev/null) | " +
+        "$(ls -d docker.cfg share.cfg network.cfg ident.cfg plugins/dynamix/dynamix.cfg plugins/*.plg " +
+        "plugins/appdata.backup*/config.json plugins/compose.manager/projects 2>/dev/null) " +
+        "$(test -f /var/local/emhttp/disks.ini && echo -C /var/local/emhttp disks.ini) " +
+        "$(test -f /var/lib/docker/unraid-autostart && echo -C /var/lib/docker unraid-autostart) | " +
         `curl -sS --data-binary @- -H "X-Unraid-Version: $(cat /etc/unraid-version)" ` +
         `-H "X-Hardware: $(lspci -n | awk '{print $2 $3}' | tr '\\n' ' ')" ` +
         `'${location.origin}/api/unraid/push?token=${t.token}'`;
@@ -321,9 +324,9 @@ async function showUnraid(message) {
         } }))) : null,
     el("div", { class: "notice" },
       el("strong", { text: "Passwords, API keys and personal details are removed. " }),
-      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image and folder mappings, its PUID, PGID and UMASK, and whether it's given a GPU or its own IP address; ",
-      "the few Docker, share and network settings it checks; the names of your plugins and where they came from; your Unraid version; and the PCI IDs of your devices, which say what kind of GPU and network card you have. ",
-      "Everything else (passwords, API keys, VPN details, IP addresses, other settings, ports, network names and time zones) is dropped as the files are read and never saved. ",
+      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; ",
+      "the few Unraid settings it checks; each disk's slot, state, size, free space and error count; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; and the PCI IDs of your devices, which say what kind of GPU and network card you have. ",
+      "Everything else (passwords, API keys, VPN details, email settings, IP addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the files are read and never saved. ",
       "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
     el("div", { class: "panel" },
       el("h2", { text: "Option 1: from Unraid's terminal (easiest)" }),
@@ -338,9 +341,11 @@ async function showUnraid(message) {
         el("code", { text: "\\\\tower\\flash\\config" }), " from your computer, and choose the ",
         el("code", { text: "plugins\\dockerMan\\templates-user" }), " and ", el("code", { text: "shares" }),
         " folders, or a zip of them. Add ", el("code", { text: "docker.cfg" }), ", ", el("code", { text: "share.cfg" }), ", ",
-        el("code", { text: "network.cfg" }), " and the ", el("code", { text: ".plg" }), " files in ", el("code", { text: "plugins" }),
-        " for the Docker, share and plugin checks. Only those files are sent; everything else is skipped. ",
-        "The GPU, network card and Unraid version checks need the terminal command."),
+        el("code", { text: "network.cfg" }), ", ", el("code", { text: "ident.cfg" }), ", ",
+        el("code", { text: "plugins\\dynamix\\dynamix.cfg" }), ", ", el("code", { text: "plugins\\appdata.backup" }),
+        " and the ", el("code", { text: ".plg" }), " files in ", el("code", { text: "plugins" }),
+        " for the Docker, share, time, alert, backup and plugin checks. Only those files are sent; everything else is skipped. ",
+        "The disk, start order, GPU, network card and Unraid version checks need the terminal command."),
       el("div", { class: "row-wrap" },
         el("label", { class: "button" }, "Choose files…", files),
         el("label", { class: "button" }, "Choose a folder…", folder))),
@@ -365,6 +370,9 @@ async function showUnraid(message) {
         s.settings && s.settings.length ? `Unraid settings: ${s.settings.join(", ")}.` : "No Docker, share or network settings were included.",
         s.plugins && s.plugins.length ? `${s.plugins.length} plugins.` : "No plugins were included.",
         s.hardware != null ? `${s.hardware} devices.` : "No hardware list (it's only sent by the terminal command).",
+        s.disks != null ? `${s.disks} disks.` : "",
+        s.autostart != null ? `${s.autostart} containers start by themselves.` : "",
+        s.backup ? "Appdata Backup's settings." : "",
         s.unraid_version ? `Unraid ${s.unraid_version}.` : "",
       ].filter(Boolean).join(" ") }),
       el("div", { class: "card-actions" },
