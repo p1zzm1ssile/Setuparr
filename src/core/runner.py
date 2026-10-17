@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import SEVERITY_ORDER, anime, arr, downloads, library, tags, unraid
+from checks import SEVERITY_ORDER, anime, arr, bazarr, downloads, library, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -203,6 +203,17 @@ def fetch_seerr(s):
     return {"servers": servers}
 
 
+def fetch_bazarr(b):
+    """Bazarr's settings (read in memory only: they hold API keys and provider passwords), health and providers."""
+    data = {"settings": b.call("GET", "/system/settings")}
+    for key, path in (("health", "/system/health"), ("providers", "/providers")):
+        try:
+            data[key] = (b.call("GET", path) or {}).get("data")
+        except (ServiceError, AttributeError):
+            data[key] = None
+    return data
+
+
 def run():
     """Run every check that has what it needs. Safe to call from several threads."""
     if not _lock.acquire(blocking=False):
@@ -213,7 +224,7 @@ def run():
         services = connected(config)
         fetched = {}
         fetchers = {"sonarr": lambda s: fetch_arr(s, "sonarr"), "radarr": lambda s: fetch_arr(s, "radarr"),
-                    "prowlarr": fetch_prowlarr, "seerr": fetch_seerr,
+                    "prowlarr": fetch_prowlarr, "seerr": fetch_seerr, "bazarr": fetch_bazarr,
                     **{key: fetch_client for key in app_info.LOGINS}}
         for key, fetch in fetchers.items():
             if key in services:
@@ -249,6 +260,8 @@ def run():
             run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
         if "seerr" in fetched:
             run_check("Seerr tags", tags.check_seerr, fetched["seerr"])
+        if "bazarr" in fetched:
+            run_check("Bazarr", bazarr.check, fetched["bazarr"], snap, [k for k in ("sonarr", "radarr") if k in services])
         if "sonarr" in fetched:
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
