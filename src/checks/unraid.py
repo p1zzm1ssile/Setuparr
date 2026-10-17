@@ -3,18 +3,25 @@
 Setuparr never looks around the server itself. It reads only the files it's
 given: the Docker templates (/boot/config/plugins/dockerMan/templates-user),
 the share settings (/boot/config/shares), Compose Manager's compose files,
-Unraid's Docker, share and network settings (/boot/config/docker.cfg,
-share.cfg and network.cfg) and the installed plugins (/boot/config/plugins/*.plg).
-The terminal command also sends the Unraid version and the PCI IDs of the
-server's devices (lspci -n), so the GPU and network card checks know what's there.
+Unraid's Docker, share, network, identification and display settings
+(/boot/config/docker.cfg, share.cfg, network.cfg, ident.cfg and
+plugins/dynamix/dynamix.cfg), the installed plugins (/boot/config/plugins/*.plg)
+and Appdata Backup's settings. The terminal command also sends the Unraid
+version, the PCI IDs of the server's devices (lspci -n), the state of the disks
+(/var/local/emhttp/disks.ini) and the order containers start in
+(/var/lib/docker/unraid-autostart).
 
 Those files can hold VPN passwords, API keys and other personal details, so
 they're read in memory and only what the checks need is kept: each container's
-name, image and folder mappings, its PUID, PGID and UMASK, and whether it's
-given a GPU or a custom network; the few Docker, share and network settings the
-checks below look at (never IP addresses); each plugin's file name and where it
-came from. Nothing else is stored: not passwords, keys, other variables, ports,
-network names or time zones.
+name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether
+it's given a GPU or a custom network, which container's network it uses, and
+whether its time zone matches Unraid's; the few Unraid settings the checks below
+look at (never IP addresses, server names, email settings or time zones); each
+disk's slot name, state, size, free space, errors and temperature (never serial
+numbers or device names); each plugin's file name, where it came from and the
+Unraid versions it's made for; and Appdata Backup's schedule, destination and
+skipped containers. Nothing else is stored: not passwords, keys, other
+variables, network names or time zones.
 """
 
 import io
@@ -33,11 +40,20 @@ AREA = "unraid"
 KEPT_VARIABLES = {"PUID", "PGID", "UMASK", "UMASK_SET"}
 # The only settings kept from Unraid's own settings files
 KEPT_SETTINGS = {
-    "docker": ("DOCKER_ENABLED", "DOCKER_IMAGE_TYPE", "DOCKER_IMAGE_FILE", "DOCKER_NETWORK_TYPE"),
-    "share": ("shareUserExclusive", "fuse_useino"),
+    "docker": ("DOCKER_ENABLED", "DOCKER_IMAGE_TYPE", "DOCKER_IMAGE_FILE", "DOCKER_NETWORK_TYPE", "DOCKER_LOG_ROTATION"),
+    "share": ("shareUserExclusive", "fuse_useino", "shareMoverSchedule"),
     "network": ("BRIDGING",),
+    "ident": ("USE_NTP", "USE_SSL", "PORT", "PORTSSL"),
+    # dynamix.cfg has sections; its email settings are never kept
+    "dynamix": ("parity.mode", "notify.alert", "notify.warning"),
 }
-SETTINGS_FILES = {"docker.cfg": "docker", "share.cfg": "share", "network.cfg": "network"}
+SETTINGS_FILES = {"docker.cfg": "docker", "share.cfg": "share", "network.cfg": "network", "ident.cfg": "ident",
+                  "dynamix.cfg": "dynamix"}
+# Unraid's own defaults for the dynamix.cfg settings above, used when they aren't in the file
+DYNAMIX_DEFAULTS = {"parity.mode": "0", "notify.alert": "1", "notify.warning": "1"}
+# What's kept of each disk in disks.ini: no serial numbers (id) or device names
+KEPT_DISK = ("name", "type", "status", "fsSize", "fsFree", "numErrors")
+BACKUP_FOLDERS = ("appdata.backup", "appdata.backup.beta")
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 50 * 1024 * 1024
 MAX_FILES = 5000
@@ -62,6 +78,11 @@ BUILT_IN_NETWORKS = {"", "bridge", "host", "none"}
 
 UNRAID_EXCLUSIVE = "https://unraid.net/blog/6-12-0-stable"
 UNRAID_MACVLAN = "https://docs.unraid.net/unraid-os/release-notes/6.12.4/"
+UNRAID_DOCS = "https://docs.unraid.net/unraid-os/manual/"
+UNRAID_PARITY = "https://docs.unraid.net/unraid-os/manual/storage-management/#parity-checks"
+UNRAID_NOTIFY = "https://docs.unraid.net/unraid-os/manual/additional-settings/#notification-settings"
+UNRAID_MOVER = "https://docs.unraid.net/unraid-os/manual/shares/user-shares/#minimum-free-space"
+APPDATA_BACKUP = "https://forums.unraid.net/topic/137710-plugin-appdatabackup/"
 REALTEK_PLUGIN = "https://forums.unraid.net/topic/141349-plugin-realtek-r8125-r8168-and-r81526-drivers/"
 NVIDIA_PLUGIN = "https://forums.unraid.net/topic/98978-plugin-nvidia-driver/"
 LSIO_GPU = "https://docs.linuxserver.io/images/docker-plex/#hardware-acceleration"
@@ -78,8 +99,10 @@ class UploadError(ValueError):
 
 
 def read_upload(files):
-    """[(name, bytes)] -> {"templates", "compose", "shares", "settings", "plugins": [(name, bytes)]}, archives opened."""
-    found = {"templates": [], "compose": [], "shares": [], "settings": [], "plugins": []}
+    """[(name, bytes)] -> {"templates", "compose", "shares", "settings", "plugins", "disks", "autostart", "backup":
+    [(name, bytes)]}, archives opened."""
+    found = {"templates": [], "compose": [], "shares": [], "settings": [], "plugins": [], "disks": [], "autostart": [],
+             "backup": []}
     total = 0
 
     def add(name, data):
@@ -98,6 +121,12 @@ def read_upload(files):
         folder = posixpath.basename(posixpath.dirname(lower))
         if base.endswith(".plg") and folder in ("", "plugins"):
             found["plugins"].append((base, data))
+        elif base == "disks.ini":
+            found["disks"].append((base, data))
+        elif base == "unraid-autostart":
+            found["autostart"].append((base, data))
+        elif base == "config.json" and folder in BACKUP_FOLDERS:
+            found["backup"].append((folder, data))
         elif base in SETTINGS_FILES and "/shares/" not in "/" + lower:
             found["settings"].append((base, data))
         elif base.endswith(".xml"):
@@ -151,7 +180,7 @@ def parse_template(name, data):
     if root.tag != "Container":
         return None
     text = lambda tag: (root.findtext(tag) or "").strip()
-    mounts, variables, devices = [], [], []
+    mounts, variables, devices, ports = [], [], [], []
     for c in root.findall("Config"):
         kind, target, value = c.get("Type", ""), (c.get("Target") or "").strip(), (c.text or "").strip()
         if kind == "Path" and value and target:
@@ -160,6 +189,8 @@ def parse_template(name, data):
             variables.append((target, value))
         elif kind == "Device":
             devices.append(value)
+        elif kind == "Port":
+            ports.append((value, target, c.get("Mode") or "tcp"))
     # Version 1 templates
     for v in root.findall("Data/Volume"):
         host, target = (v.findtext("HostDir") or "").strip(), (v.findtext("ContainerDir") or "").strip()
@@ -167,16 +198,57 @@ def parse_template(name, data):
             mounts.append({"host": host, "container": target, "mode": (v.findtext("Mode") or "rw").strip()})
     for v in root.findall("Environment/Variable"):
         variables.append(((v.findtext("Name") or "").strip(), (v.findtext("Value") or "").strip()))
+    for p in root.findall("Networking/Publish/Port"):
+        ports.append(((p.findtext("HostPort") or "").strip(), (p.findtext("ContainerPort") or "").strip(),
+                      (p.findtext("Protocol") or "tcp").strip()))
     container = text("Name") or re.sub(r"^my-|\.xml$", "", name)
+    network = text("Network") or text("Networking/Mode")
+    joined = re.search(r"--(?:net|network)(?:=|\s+)['\"]?container:([^'\"\s]+)", text("ExtraParams"))
+    if joined:
+        network = "container:" + joined.group(1)
+    kind = network_kind(network)
     return {
         "name": container,
         "source": "template",
         "image": text("Repository"),
         "mounts": mounts,
         "variables": kept_variables(variables),
-        "custom_network": text("Network").lower() not in BUILT_IN_NETWORKS and not text("Network").startswith("container:"),
+        "custom_network": network.lower() not in BUILT_IN_NETWORKS and not network.startswith("container:"),
+        "network": kind,
+        "network_of": network.split(":", 1)[1].strip() if kind == "container" else None,
+        "ports": published_ports(ports, kind),
         "gpu": gpu_access(devices, text("ExtraParams"), dict(variables)),
+        # Unraid gives every container its own time zone unless the template sets TZ. Only whether the two match is
+        # kept (in build_snapshot), never the time zone.
+        "_tz": dict(variables).get("TZ") or None,
     }
+
+
+def network_kind(network):
+    """bridge (ports are published on Unraid's address), host (the app uses Unraid's address and its own port),
+    own_ip (macvlan or ipvlan, e.g. br0: ports aren't published), container (another container's network) or none.
+    Any other name is a network made with docker network create, which is a bridge."""
+    network = (network or "").strip().lower()
+    if network.startswith(("container:", "service:")):
+        return "container"
+    if network in ("host", "none"):
+        return network
+    if re.fullmatch(r"(br|eth|bond|wlan|vhost)\d+(\.\d+)?", network):
+        return "own_ip"
+    return "bridge"
+
+
+def published_ports(ports, kind):
+    """[(host port, container port, protocol)] -> ["8989/tcp"], the ports a container takes on Unraid's address."""
+    if kind not in ("bridge", "host"):
+        return []
+    out = set()
+    for host, target, protocol in ports:
+        port = (target if kind == "host" else host) or ""
+        protocol = "udp" if str(protocol).lower() == "udp" else "tcp"
+        if re.fullmatch(r"\d{1,5}", port.strip()) and 0 < int(port) < 65536:
+            out.add(f"{int(port)}/{protocol}")
+    return sorted(out, key=lambda p: (int(p.split("/")[0]), p))
 
 
 def gpu_access(devices, extra, variables, nvidia_runtime=False):
@@ -212,20 +284,44 @@ def parse_compose(name, data):
         reserved = (((spec.get("deploy") or {}).get("resources") or {}).get("reservations") or {}).get("devices") or []
         reserved_nvidia = any(isinstance(d, dict) and d.get("driver") == "nvidia" for d in reserved)
         variables = dict(pairs)
+        mode = str(spec.get("network_mode") or "")
+        kind = network_kind(mode)
+        tz = variables.get("TZ")
         if reserved_nvidia:
             # Compose's own way of giving a container an Nvidia GPU needs no variable
             variables.setdefault("NVIDIA_VISIBLE_DEVICES", "all")
+        own_ip = any(network_kind(str(n)) == "own_ip" for n in spec.get("networks") or {})
         containers.append({
             "name": spec.get("container_name") or service,
             "source": "compose",
             "image": str(spec.get("image", "")),
             "mounts": mounts,
             "variables": kept_variables(pairs),
-            "custom_network": any(str(n).startswith(("br", "eth", "bond")) for n in spec.get("networks") or {}),
+            "custom_network": own_ip,
+            "network": "own_ip" if own_ip and kind == "bridge" else kind,
+            "network_of": mode.split(":", 1)[1].strip() if kind == "container" else None,
+            "ports": [] if own_ip else published_ports(compose_ports(spec.get("ports")), kind),
             "gpu": gpu_access([str(d) for d in spec.get("devices") or []], "", variables,
                               spec.get("runtime") == "nvidia" or reserved_nvidia),
+            # Compose doesn't add Unraid's time zone, so a container without TZ runs on UTC
+            "_tz": str(tz) if tz else "UTC",
         })
     return containers
+
+
+def compose_ports(ports):
+    """Compose's ports, short ("8080:80/udp", "127.0.0.1:8080:80") or long syntax, as (host, container, protocol).
+    Ports Docker picks itself, and ranges, are left out."""
+    out = []
+    for p in ports or []:
+        if isinstance(p, dict):
+            out.append((str(p.get("published") or ""), str(p.get("target") or ""), str(p.get("protocol") or "tcp")))
+            continue
+        spec, _, protocol = str(p).partition("/")
+        parts = spec.rsplit(":", 2)
+        if len(parts) >= 2:
+            out.append((parts[-2], parts[-1], protocol or "tcp"))
+    return out
 
 
 def parse_cfg(data):
@@ -239,28 +335,94 @@ def parse_cfg(data):
     return values
 
 
+def parse_ini(data):
+    """Files with [sections] (dynamix.cfg, disks.ini) -> {section: {key: value}}."""
+    sections, current = {}, None
+    for line in data.decode("utf-8", "replace").splitlines():
+        header = re.match(r'^\s*\["?([^"\]]+)"?\]\s*$', line)
+        if header:
+            current = sections.setdefault(header.group(1), {})
+            continue
+        match = re.match(r'^\s*(\w+)\s*=\s*"?(.*?)"?\s*$', line)
+        if match and current is not None:
+            current.setdefault(match.group(1), match.group(2))
+    return sections
+
+
 def parse_settings(name, data):
     kind = SETTINGS_FILES[name]
-    values = parse_cfg(data)
+    if kind == "dynamix":
+        values = {f"{section}.{k}": v for section, keys in parse_ini(data).items() for k, v in keys.items()}
+        values = {**DYNAMIX_DEFAULTS, **values}
+    else:
+        values = parse_cfg(data)
     return kind, {k: values[k] for k in KEPT_SETTINGS[kind] if k in values}
+
+
+def parse_disks(data):
+    """disks.ini: the array and pool slots, their state, size, free space, errors and temperature. Serial numbers
+    and device names are dropped."""
+    disks = []
+    for section, values in parse_ini(data).items():
+        if values.get("type") not in ("Parity", "Data", "Cache", "Flash"):
+            continue
+        disk = {k: values[k] for k in KEPT_DISK if k in values}
+        disk["name"] = disk.get("name") or section
+        disk["unmountable"] = values.get("fsStatus", "").lower().startswith("unmountable")
+        disks.append(disk)
+    return disks
+
+
+def parse_autostart(data):
+    """unraid-autostart: the containers that start with Docker, one per line in the order they start, each with an
+    optional wait in seconds."""
+    return [line.split()[0] for line in data.decode("utf-8", "replace").splitlines() if line.strip()][:500]
+
+
+def parse_backup(data):
+    """Appdata Backup's config.json: its schedule, destination, whether it backs up the flash drive, and which
+    containers it skips. Its scripts and everything else are dropped."""
+    import json
+    try:
+        config = json.loads(data)
+    except ValueError:
+        return None
+    if not isinstance(config, dict):
+        return None
+    skipped = sorted(name for name, c in (config.get("containerSettings") or {}).items()
+                     if isinstance(c, dict) and "yes" in (c.get("skip"), c.get("skipBackup")))
+    return {"frequency": str(config.get("backupFrequency") or "disabled"),
+            "destination": str(config.get("destination") or ""),
+            "flash": str(config.get("flashBackup") or "yes"),
+            "skipped": skipped}
 
 
 def parse_plugin(name, data):
     """An installed plugin: its file name, and the address it was installed from (which is how Community
     Applications' moderation list names it). Its scripts and everything else are dropped."""
-    url = ""
+    url, versions = "", {}
     try:
         root = ET.fromstring(data)
         if root.tag == "PLUGIN":
             url = (root.get("pluginURL") or "").strip()
+            versions = {k: root.get(k) or "" for k in ("min", "max")}
     except ET.ParseError:
         # Some use an entity Python can't expand; the address is still in the DOCTYPE
         match = re.search(rb'<!ENTITY\s+pluginURL\s+"([^"]+)"', data)
         if match:
             url = match.group(1).decode("utf-8", "replace")
+        for k in ("min", "max"):
+            match = re.search(rb'<PLUGIN[^>]*\s' + k.encode() + rb'="([\d.]+)"', data)
+            if match:
+                versions[k] = match.group(1).decode()
     if "&" in url or not url.startswith(("http://", "https://")):
         url = ""
-    return {"file": name, "url": url}
+    plugin = {"file": name, "url": url}
+    # The Unraid versions the plugin is made for, when it says
+    for k, v in versions.items():
+        if re.fullmatch(r"\d+(\.\d+){0,3}", v.strip()):
+            plugin[k] = v.strip()
+    return plugin
 
 
 def parse_hardware(header):
@@ -274,6 +436,12 @@ def parse_hardware(header):
     return devices
 
 
+def same_zone(tz):
+    """UTC goes by several names."""
+    tz = (tz or "").strip()
+    return "UTC" if tz.upper() in ("UTC", "ETC/UTC", "GMT", "ETC/GMT", "UNIVERSAL", "ZULU", "ETC/UCT", "UCT") else tz
+
+
 def parse_version(text):
     match = re.search(r"\d+\.\d+(\.\d+)?(-[\w.]+)?", text or "")
     return match.group(0) if match else None
@@ -285,7 +453,8 @@ def version_tuple(version):
 
 def parse_share(name, data):
     values = parse_cfg(data)
-    keep = ("shareUseCache", "shareCachePool", "shareCachePool2", "shareAllocator", "shareSplitLevel")
+    keep = ("shareUseCache", "shareCachePool", "shareCachePool2", "shareAllocator", "shareSplitLevel", "shareFloor",
+            "shareExport", "shareSecurity")
     return {"name": name[:-4], **{k: values[k] for k in keep if k in values}}
 
 
@@ -304,14 +473,33 @@ def build_snapshot(raw, hardware=None, version=None):
     shares = [parse_share(n, d) for n, d in raw["shares"]]
     settings = dict(parse_settings(n, d) for n, d in raw.get("settings", []))
     plugins = sorted((parse_plugin(n, d) for n, d in raw.get("plugins", [])), key=lambda p: p["file"])
-    if not containers and not shares and not settings and not plugins:
+    disks = [d for _, data in raw.get("disks", [])[:1] for d in parse_disks(data)]
+    autostart = [parse_autostart(data) for _, data in raw.get("autostart", [])[:1]]
+    # The beta plugin's settings, if both are there, are the ones in use only when the beta is installed
+    backups = {folder: parse_backup(data) for folder, data in raw.get("backup", [])}
+    installed_files = {p["file"] for p in plugins}
+    backup = next((backups[f] for f in BACKUP_FOLDERS[::-1] if backups.get(f) and f + ".plg" in installed_files),
+                  None) or next((b for b in backups.values() if b), None)
+    if not containers and not shares and not settings and not plugins and not disks:
         raise UploadError("No Docker templates, compose files or share settings were found in what you uploaded")
+    server_tz = next((parse_cfg(d).get("timeZone") for n, d in raw.get("settings", []) if n == "ident.cfg"), None)
+    for c in containers:
+        tz = c.pop("_tz", None)
+        # Only whether it matches is kept, not the time zone
+        if server_tz and (tz or c["source"] == "compose"):
+            c["tz_differs"] = same_zone(tz) != same_zone(server_tz)
     snap = {"containers": sorted(containers, key=lambda c: c["name"].lower()),
             "shares": sorted(shares, key=lambda s: s["name"].lower()),
             "settings": settings}
     # Left out when they weren't sent, so the checks that need them know not to guess
     if plugins:
         snap["plugins"] = plugins
+    if disks:
+        snap["disks"] = disks
+    if autostart:
+        snap["autostart"] = autostart[0]
+    if backup:
+        snap["backup"] = backup
     if hardware is not None:
         snap["hardware"] = parse_hardware(hardware)
     if parse_version(version):
@@ -403,7 +591,18 @@ def check(snapshot, moderation=None):
     findings += check_moderation(snapshot.get("plugins"), containers, moderation)
     findings += check_recommended_plugins(snapshot.get("plugins"))
     findings += check_hardware(snapshot.get("hardware"), snapshot.get("plugins"),
-                               [c for c in containers if c["role"] == "server"])
+                               [c for c in containers if c["role"] == "server"], containers)
+    findings += check_plugin_versions(snapshot.get("plugins"), snapshot.get("unraid_version"))
+    findings += check_ports(containers, settings.get("ident"))
+    findings += check_start_order(containers, snapshot.get("autostart"))
+    findings += check_docker_logs(settings.get("docker"))
+    findings += check_disks(snapshot.get("disks"))
+    findings += check_parity_schedule(snapshot.get("disks"), settings.get("dynamix"))
+    findings += check_alerts(settings.get("dynamix"))
+    findings += check_time(settings.get("ident"), containers)
+    findings += check_smb(snapshot["shares"])
+    findings += check_mover(settings.get("share"), snapshot["shares"], arrs + clients, snapshot.get("disks"))
+    findings += check_backup(snapshot.get("backup"), snapshot.get("plugins"), snapshot["shares"], containers)
     return sent(snapshot, findings)
 
 
@@ -697,6 +896,378 @@ def check_macvlan(docker, network, containers, version):
         steps=steps, items=on_custom, link=UNRAID_MACVLAN)]
 
 
+# Ports, start order and Docker's logs
+
+
+def check_ports(containers, ident):
+    """Two containers on the same host port, or one on the port Unraid's web UI uses: Docker won't start the second."""
+    ident = ident or {}
+    ui = {f"{ident.get('PORT') or '80'}/tcp": "Unraid's web UI"}
+    if ident.get("USE_SSL") in ("yes", "auto"):
+        ui[f"{ident.get('PORTSSL') or '443'}/tcp"] = "Unraid's web UI (HTTPS)"
+    by_port = {}
+    for c in containers:
+        for port in c.get("ports") or []:
+            by_port.setdefault(port, []).append(c["name"])
+    findings = []
+    for port, names in sorted(by_port.items(), key=lambda p: int(p[0].split("/")[0])):
+        number = port.split("/")[0]
+        if port in ui:
+            findings.append(finding(
+                f"port-ui|{port}", AREA, PROBLEM, "Unraid",
+                f"{' and '.join(sorted(names))} {'uses' if len(names) == 1 else 'use'} port {number}, which {ui[port]} needs",
+                f"Unraid's web UI is on port {number}, so Docker can't give it to a container too: the container won't "
+                "start, or if it starts first, you can't open Unraid's web UI.",
+                steps=[f"Edit {names[0]} and change the host port {number} to a free one, e.g. 8{number.zfill(3)}. The "
+                       "port inside the container (Container Port) stays the same."],
+                items=sorted(names)))
+        elif len(set(names)) > 1:
+            findings.append(finding(
+                f"port|{port}", AREA, WARNING, "Unraid",
+                f"{plural(len(set(names)), 'container')} want port {number}",
+                f"{', '.join(sorted(set(names)))} are all mapped to port {number} on Unraid. Only one container can "
+                "have a port, so whichever starts second won't start. If one of them is an old template you don't "
+                "use, untick it on the Unraid page.",
+                steps=["Edit all but one of them and change the host port to a free one. The port inside the container "
+                       "(Container Port) stays the same, and anything that reaches the app at that port needs the new one."],
+                items=sorted(set(names))))
+    return findings
+
+
+def check_start_order(containers, autostart):
+    """Containers that use another container's network (e.g. qBittorrent through Gluetun) need it running first,
+    and the media apps should start by themselves after a reboot."""
+    if not autostart:
+        return []
+    order = {name: i for i, name in enumerate(autostart)}
+    findings = []
+    for c in containers:
+        other = c.get("network_of")
+        if not other or c["source"] != "template" or c["name"] not in order:
+            continue
+        if other not in order:
+            findings.append(finding(
+                f"start-network|{c['name']}", AREA, PROBLEM, "Unraid",
+                f"{c['name']} starts by itself, but {other}, whose network it uses, doesn't",
+                f"{c['name']} has no network of its own: it goes through {other}'s. After a reboot {other} isn't "
+                f"started, so {c['name']} fails to start too.",
+                steps=[f"On the Docker page, turn on Autostart for {other}, and drag it above {c['name']}."],
+                items=[c["name"], other]))
+        elif order[other] > order[c["name"]]:
+            findings.append(finding(
+                f"start-order|{c['name']}", AREA, PROBLEM, "Unraid",
+                f"{c['name']} starts before {other}, whose network it uses",
+                f"{c['name']} goes through {other}'s network, but Unraid starts it first, so after a reboot it fails "
+                f"to start, or starts with no network.",
+                steps=[f"On the Docker page, unlock the order (the padlock at the top right) and drag {other} above "
+                       f"{c['name']}.",
+                       f"Then give {other} a wait of 10 seconds or so in its Autostart setting, so it's connected before "
+                       f"{c['name']} starts."],
+                items=[f"{order[c['name']] + 1}. {c['name']}", f"{order[other] + 1}. {other}"]))
+
+    left_out = sorted(c["name"] for c in containers
+                      if c.get("role") and c["source"] == "template" and c["name"] not in order)
+    if left_out:
+        findings.append(finding(
+            "autostart", AREA, TIP, "Unraid",
+            f"{plural(len(left_out), 'media container')} "
+            + ("doesn't start by itself" if len(left_out) == 1 else "don't start by themselves"),
+            "Autostart is off for the containers below, so after a reboot or an Unraid update they stay stopped until "
+            "you start them. If one is an old template you don't use, untick it on the Unraid page instead.",
+            steps=["On the Docker page, turn on Autostart for each container below."],
+            items=left_out))
+    return findings
+
+
+def check_docker_logs(docker):
+    if not docker or docker.get("DOCKER_ENABLED") == "no" or docker.get("DOCKER_LOG_ROTATION") != "no":
+        return []
+    return [finding(
+        "docker-logs", AREA, WARNING, "Unraid", "Docker's log rotation is turned off",
+        "Each container's log then grows for ever. A chatty container can fill docker.img or your cache pool, and "
+        "when that's full, containers stop working.",
+        steps=["Stop Docker in Settings > Docker (Enable Docker: No).",
+               "Set Docker LOG rotation to Enabled (Unraid's default keeps one 50 MB file per container), then start "
+               "Docker again."],
+        link=UNRAID_DOCS)]
+
+
+# Disks, parity, alerts and time
+
+# Disk states Unraid shows in red or yellow on the Main page
+BAD_DISK = {"DISK_DSBL": "is disabled, and its contents are being emulated from parity",
+            "DISK_DSBL_NEW": "is disabled and waiting to be rebuilt",
+            "DISK_INVALID": "has invalid contents and needs rebuilding",
+            "DISK_WRONG": "isn't the disk that was assigned to this slot",
+            "DISK_NP_MISSING": "is missing"}
+
+
+def disk_label(disk):
+    return {"parity": "Parity", "parity2": "Parity 2", "flash": "The flash drive"}.get(disk["name"]) or (
+        f"Disk {disk['name'][4:]}" if re.fullmatch(r"disk\d+", disk["name"]) else f"The {disk['name']} pool device")
+
+
+def as_int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def check_disks(disks):
+    if not disks:
+        return []
+    findings = []
+    for d in disks:
+        label = disk_label(d)
+        if d.get("status") in BAD_DISK:
+            findings.append(finding(
+                f"disk-state|{d['name']}", AREA, PROBLEM, "Unraid", f"{label} {BAD_DISK[d['status']]}",
+                "Until it's fixed the array has no protection left: if another disk fails, its data is lost. Writes to "
+                "an emulated disk are slow too.",
+                steps=["Open Tools > Diagnostics and download them, then look at the disk's SMART report on the Main "
+                       "page (click the disk).",
+                       "If the disk is healthy (often it's a loose cable), rebuild onto it: stop the array, unassign the "
+                       "disk, start the array, stop it, assign the disk again and start the array.",
+                       "If it's failing, replace it and rebuild onto the new disk. Ask on the Unraid forum with your "
+                       "diagnostics if you're not sure."],
+                link=UNRAID_PARITY))
+        if d.get("unmountable"):
+            findings.append(finding(
+                f"disk-unmountable|{d['name']}", AREA, PROBLEM, "Unraid", f"{label} is unmountable",
+                "Unraid can't read the file system on it, so its files aren't in your shares. Don't format it: that "
+                "erases the data and, on the array, updates parity to match.",
+                steps=["Start the array in Maintenance mode, click the disk on the Main page and run Check Filesystem "
+                       "Status without -n to repair it.",
+                       "Ask on the Unraid forum with your diagnostics (Tools > Diagnostics) if the repair doesn't work."],
+                link=UNRAID_DOCS))
+    errors = sorted(f"{disk_label(d)}: {as_int(d.get('numErrors'))}" for d in disks if as_int(d.get("numErrors")) > 0)
+    if errors:
+        findings.append(finding(
+            "disk-errors", AREA, WARNING, "Unraid", f"{plural(len(errors), 'disk')} had read or write errors",
+            "The Errors column on the Main page isn't zero. It's often a loose or bad cable, but can be a failing "
+            "disk. Unraid disables a disk when a write to it fails.",
+            steps=["Click each disk on the Main page and look at its SMART attributes, especially Reallocated, Pending "
+                   "and UDMA CRC errors. CRC errors mean the cable; the others mean the disk.",
+                   "Reseat or replace the cable, then run a parity check. The counts reset when the server restarts."],
+            items=errors, link=UNRAID_DOCS))
+
+    data = [d for d in disks if d.get("type") == "Data" and d.get("status") not in ("DISK_NP", None)]
+    parity = [d for d in disks if d.get("type") == "Parity" and d.get("status") not in ("DISK_NP", "DISK_NP_DSBL", None)]
+    if data and not parity:
+        findings.append(finding(
+            "no-parity", AREA, WARNING, "Unraid", "Your array has no parity drive",
+            "Without parity, a failed array disk loses everything on it. One parity drive protects against any one "
+            "disk failing; it has to be at least as big as your biggest data disk.",
+            steps=["Add a disk at least as big as your largest data disk, stop the array and assign it to the Parity "
+                   "slot, then start the array to build parity."],
+            items=[disk_label(d) for d in data], link=UNRAID_PARITY))
+
+    names = {d["name"] for d in disks}
+    for d in disks:
+        size, free = as_int(d.get("fsSize")), as_int(d.get("fsFree"))
+        member = re.sub(r"\d+$", "", d["name"]) != d["name"] and re.sub(r"\d+$", "", d["name"]) in names
+        if d.get("type") not in ("Cache", "Flash") or member or size <= 0 or free / size > 0.1:
+            continue
+        flash = d.get("type") == "Flash"
+        what = "The flash drive" if flash else f"The {d['name']} pool"
+        findings.append(finding(
+            f"full|{d['name']}", AREA, WARNING, "Unraid", f"{what} is {round(100 - free * 100 / size)}% full",
+            ("Unraid saves its settings and updates to the flash drive. When it's full, settings don't save and "
+             "updates fail." if flash else
+             f"When {d['name']} fills up, downloads stop, containers' databases can be damaged, and Docker can stop "
+             "working if it lives there."),
+            steps=(["Delete old files from the flash drive's previous folder and any old diagnostics or logs saved "
+                    "there, from the flash share or Main > Flash."] if flash else
+                   ["Run the mover (Main > Move) if shares on this pool are set to move to the array.",
+                    "Check which shares are filling it (Shares, Compute All), and give downloads shares a Minimum "
+                    "free space so new files go to the array first."]),
+            link=UNRAID_MOVER if not flash else UNRAID_DOCS))
+    return findings
+
+
+def check_parity_schedule(disks, dynamix):
+    if not disks or not dynamix or dynamix.get("parity.mode") != "0":
+        return []
+    if not any(d.get("type") == "Parity" and d.get("status") == "DISK_OK" for d in disks):
+        return []
+    return [finding(
+        "parity-schedule", AREA, WARNING, "Unraid", "Parity checks aren't scheduled",
+        "A parity check reads every disk end to end. It finds disks that are going bad and parity that's wrong while "
+        "you can still fix them, instead of when a disk fails and you need to rebuild. Unraid suggests once a month.",
+        steps=["In Settings > Scheduler, set Parity Check to Monthly, at a time the server is quiet, and leave Write "
+               "corrections to parity on No."],
+        link=UNRAID_PARITY)]
+
+
+def check_alerts(dynamix):
+    """dynamix.cfg's notify settings add 1 for the browser, 2 for email and 4 for agents (Discord, Pushover...)."""
+    if not dynamix:
+        return []
+    if as_int(dynamix.get("notify.alert") or "1") & 6:
+        return []
+    return [finding(
+        "alerts", AREA, WARNING, "Unraid", "Unraid only tells you about failing disks in its web UI",
+        "Alerts, like a disk being disabled or overheating, are only shown when you open Unraid's web UI. A failed "
+        "disk can go unnoticed for weeks, and then a second failure loses data.",
+        steps=["In Settings > Notification Settings, set up email (SMTP Settings) or a notification agent such as "
+               "Discord, Pushover, Telegram or ntfy.",
+               "Tick Email or Agents for Alerts and Warnings, and press Test to check it arrives."],
+        link=UNRAID_NOTIFY)]
+
+
+def check_time(ident, containers):
+    findings = []
+    if ident and ident.get("USE_NTP") == "no":
+        findings.append(finding(
+            "ntp", AREA, WARNING, "Unraid", "Unraid's clock isn't set from the internet",
+            "Without NTP, the clock drifts. A clock that's minutes out breaks secure connections, logins with "
+            "two-factor codes and indexer searches, and schedules run at the wrong time.",
+            steps=["In Settings > Date and Time, set Time sync to NTP and keep the suggested time servers (or "
+                   "pool.ntp.org), then Apply."],
+            link=UNRAID_DOCS))
+    differs = sorted(c["name"] for c in containers if c.get("tz_differs"))
+    if differs:
+        findings.append(finding(
+            "timezone", AREA, TIP, "Unraid",
+            f"{plural(len(differs), 'container')} {'runs' if len(differs) == 1 else 'run'} on a different time zone from Unraid",
+            "Times in their logs, schedules and history don't match Unraid's, which makes problems hard to line up "
+            "and can run tasks at the wrong hour. Compose containers without a TZ variable run on UTC.",
+            steps=["For a Docker template: edit it and remove the TZ variable, so Unraid's time zone is used.",
+                   "For a compose file: add TZ with your time zone (e.g. Europe/London) to each service's environment."],
+            items=differs))
+    return findings
+
+
+def check_smb(shares):
+    """appdata holds every app's API keys and databases, so it shouldn't be readable by anyone on the network."""
+    findings = []
+    for s in shares:
+        if s["name"] != "appdata" or s.get("shareExport") in (None, "", "-"):
+            continue
+        if s.get("shareSecurity") in ("public", "secure"):
+            findings.append(finding(
+                "smb|appdata", AREA, WARNING, "Unraid", "Anyone on your network can read appdata",
+                f"appdata is shared over SMB as {'Public' if s['shareSecurity'] == 'public' else 'Secure'}, so anyone "
+                "on your network can open it without a password"
+                + (" and change or delete files" if s["shareSecurity"] == "public" else "")
+                + ". It holds every app's API keys, passwords and databases.",
+                steps=["In Shares > appdata, set SMB Security Settings > Export to No, or set Security to Private and "
+                       "give only your own user Read/Write access."],
+                link=UNRAID_DOCS))
+    return findings
+
+
+# The mover and backups
+
+
+def media_shares(media_containers):
+    used = set()
+    for c in media_containers:
+        for m in c["data"]:
+            where = location(m["host"])
+            if where:
+                used.add(where[1])
+    return used
+
+
+def check_mover(share_settings, shares, media_containers, disks):
+    findings = []
+    by_name = {s["name"]: s for s in shares}
+    used = media_shares(media_containers)
+    cron = ((share_settings or {}).get("shareMoverSchedule") or "").split()
+    moving = [n for n in sorted(used) if by_name.get(n, {}).get("shareUseCache") == "yes"]
+    if len(cron) == 5 and cron[1].startswith("*") and moving:
+        findings.append(finding(
+            "mover-hourly", AREA, TIP, "Unraid", "The mover runs every hour",
+            "Each run spins up the array's disks, and moving files that are still being downloaded, seeded or "
+            "imported slows everything down. Once a day, at night, is usually enough when the cache has room for a "
+            "day's downloads.",
+            steps=["In Settings > Scheduler > Mover Settings, set the mover schedule to Daily, at a quiet time."],
+            items=moving, link=UNRAID_MOVER))
+    for name in sorted(used):
+        share = by_name.get(name)
+        if not share:
+            continue
+        if share.get("shareUseCache") == "yes" and share.get("shareFloor") == "0":
+            findings.append(finding(
+                f"floor|{name}", AREA, WARNING, "Unraid", f"The {name} share has no minimum free space",
+                f"New files in {name} go to the cache until it's completely full, and then a download or import fails "
+                "half written. With a minimum free space, Unraid sends new files to the array once the cache gets low.",
+                steps=[f"In Shares > {name}, set Minimum free space to a bit more than the largest file you download "
+                       "(e.g. 100GB), or empty it to let Unraid work it out."],
+                link=UNRAID_MOVER))
+        array = disks is None or any(d.get("type") == "Data" and d.get("status") == "DISK_OK" for d in disks or [])
+        if share.get("shareUseCache") == "only" and array:
+            findings.append(finding(
+                f"cache-only|{name}", AREA, WARNING, "Unraid", f"The {name} share never leaves the cache",
+                f"{name} holds downloads or media, but it has no secondary storage, so the mover never moves it to the "
+                "array. A library soon outgrows a cache pool, and when the pool's full, downloads fail. If this pool "
+                "is meant to hold your whole library, dismiss this.",
+                steps=[f"In Shares > {name}, set the secondary storage to the array and the mover action to Cache -> "
+                       "Array (on Unraid before 6.12: Use cache pool: Yes)."],
+                link=UNRAID_MOVER))
+    return findings
+
+
+def check_backup(backup, plugins, shares, containers):
+    if not backup or (plugins is not None and not installed(plugins, "appdata.backup.plg", "appdata.backup.beta.plg")):
+        return []
+    findings = []
+    if not backup["destination"]:
+        return [finding(
+            "backup-destination", AREA, WARNING, "Appdata Backup", "Appdata Backup has nowhere to save backups",
+            "No destination is set, so it can't back anything up.",
+            steps=["In Settings > Appdata Backup, choose a Backup destination on the array or another server, then "
+                   "set a schedule."],
+            link=APPDATA_BACKUP)]
+    if backup["frequency"] == "disabled":
+        findings.append(finding(
+            "backup-schedule", AREA, WARNING, "Appdata Backup", "Appdata Backup never runs by itself",
+            "Its schedule is Disabled, so backups only happen when you press Backup. The last backup is as old as the "
+            "last time you remembered.",
+            steps=["In Settings > Appdata Backup, set Scheduled backup frequency to Weekly (or Daily), at a quiet time."],
+            link=APPDATA_BACKUP))
+    if backup["flash"] == "no":
+        findings.append(finding(
+            "backup-flash", AREA, WARNING, "Appdata Backup", "The flash drive isn't backed up",
+            "The flash drive holds your whole Unraid setup: disk assignments, shares, Docker templates and plugins. "
+            "Flash drives fail, and without a backup you set everything up again by hand. Skip this if Unraid Connect "
+            "backs it up for you.",
+            steps=["In Settings > Appdata Backup, set Backup the flash drive? to Yes."],
+            link=APPDATA_BACKUP))
+
+    by_name = {s["name"]: s for s in shares}
+    appdata_pool = by_name.get("appdata", {}).get("shareCachePool") or "cache"
+    where = share_of(backup["destination"])
+    same = False
+    if where:
+        kind, name = where
+        dest = by_name.get(name, {})
+        top = clean(backup["destination"]).split("/")[2]
+        same = (name == "appdata" or (kind == "disk" and top == appdata_pool)
+                or (kind == "user" and dest.get("shareUseCache") == "only" and (dest.get("shareCachePool") or "cache") == appdata_pool))
+    if same:
+        findings.append(finding(
+            "backup-same-pool", AREA, WARNING, "Appdata Backup", "Appdata backups are on the same pool as appdata",
+            f"Backups go to {backup['destination']}, which is on the {appdata_pool} pool with appdata itself. If the "
+            "pool fails, you lose your apps and their backups together.",
+            steps=["In Settings > Appdata Backup, choose a destination on the array (a share with no cache, or one the "
+                   "mover moves to the array) or on another server."],
+            items=[backup["destination"]], link=APPDATA_BACKUP))
+
+    skipped = sorted(c["name"] for c in containers if c.get("role") and c["name"] in set(backup["skipped"]))
+    if skipped:
+        findings.append(finding(
+            "backup-skipped", AREA, WARNING, "Appdata Backup",
+            f"Appdata Backup skips {plural(len(skipped), 'media container')}",
+            "Their settings and databases aren't backed up, so losing the cache pool means setting them up again and "
+            "losing their history.",
+            steps=["In Settings > Appdata Backup, set Skip? to No for each container below."],
+            items=skipped, link=APPDATA_BACKUP))
+    return findings
+
+
 # Plugins and drivers
 
 
@@ -774,6 +1345,28 @@ def check_recommended_plugins(plugins):
     return findings
 
 
+def check_plugin_versions(plugins, version):
+    if not plugins or not version:
+        return []
+    current = version_tuple(version)
+    wrong = []
+    for p in plugins:
+        if p.get("max") and current[:len(version_tuple(p["max"]))] > version_tuple(p["max"]):
+            wrong.append(f"{p['file']}: made for Unraid {p['max']} and earlier")
+        elif p.get("min") and current < version_tuple(p["min"]):
+            wrong.append(f"{p['file']}: needs Unraid {p['min']} or later")
+    if not wrong:
+        return []
+    return [finding(
+        "plugin-version", AREA, WARNING, "Unraid", f"{plural(len(wrong), 'plugin')} {'isn' if len(wrong) == 1 else 'aren'}'t made for Unraid {version}",
+        "Unraid's plugin manager won't update these, and they can break the web UI or stop the server booting "
+        "cleanly. Usually there's a newer version, or Unraid now does the job itself.",
+        steps=["Open Plugins and press Check for Updates.",
+               "If there's no update, remove the plugin, then look in Apps for a replacement that supports your Unraid "
+               "version."],
+        items=wrong)]
+
+
 GPU_CLASSES = ("0300", "0302", "0380")
 GPU_VENDORS = {"8086": "Intel", "1002": "AMD", "10de": "Nvidia"}
 REALTEK_DRIVERS = [
@@ -785,7 +1378,7 @@ REALTEK_DRIVERS = [
 CORAL = {"1ac1:089a"}
 
 
-def check_hardware(hardware, plugins, servers):
+def check_hardware(hardware, plugins, servers, containers=()):
     """Drivers for the GPUs, network cards and Coral accelerators found, and whether the media servers get the GPU."""
     if not hardware:
         return []
@@ -827,6 +1420,25 @@ def check_hardware(hardware, plugins, servers):
                 "use it.",
                 steps=["In Unraid, open Apps, search for Coral Accelerator Module Drivers and install it, then reboot."]))
 
+    displays = any(d["class"].startswith("03") for d in hardware)
+    for c in containers:
+        gpu = c.get("gpu") or {}
+        if gpu.get("nvidia") and "Nvidia" not in gpus:
+            findings.append(finding(
+                f"gpu-missing-nvidia|{c['name']}", AREA, PROBLEM, "Unraid", f"{c['name']} is given an Nvidia GPU this server doesn't have",
+                f"{c['name']} runs with the Nvidia runtime and NVIDIA_VISIBLE_DEVICES, but there's no Nvidia GPU here, "
+                "so Docker can't start it.",
+                steps=[f"Edit {c['name']} in Advanced View, remove --runtime=nvidia from Extra Parameters and remove the "
+                       "NVIDIA_VISIBLE_DEVICES and NVIDIA_DRIVER_CAPABILITIES variables."]))
+        if gpu.get("dri") and not ({"Intel", "AMD"} & set(gpus)):
+            findings.append(finding(
+                f"gpu-missing-dri|{c['name']}", AREA, WARNING, "Unraid", f"{c['name']} is given /dev/dri, but there's no Intel or AMD GPU",
+                f"{c['name']} is given /dev/dri for hardware transcoding, but this server has no Intel or AMD GPU for "
+                "it to use. " + ("A server board's own graphics shows up as /dev/dri too, but can't transcode."
+                                 if displays else "Without one, /dev/dri doesn't exist and Docker can't start it."),
+                steps=[f"Edit {c['name']} and remove the /dev/dri device (or --device=/dev/dri from Extra Parameters).",
+                       "If the CPU has graphics, check it's turned on in the BIOS (often called iGPU or Multi-Monitor)."]))
+
     for server in servers:
         gpu = server.get("gpu") or {}
         if not gpus or gpu.get("dri") or gpu.get("nvidia"):
@@ -862,4 +1474,7 @@ def summary(snapshot):
             "settings": sorted(f"{k}.cfg" for k in snapshot.get("settings") or {}),
             "plugins": [p["file"] for p in snapshot.get("plugins") or []],
             "hardware": len(snapshot["hardware"]) if "hardware" in snapshot else None,
+            "disks": len(snapshot["disks"]) if "disks" in snapshot else None,
+            "autostart": len(snapshot["autostart"]) if "autostart" in snapshot else None,
+            "backup": "backup" in snapshot,
             "unraid_version": snapshot.get("unraid_version")}
