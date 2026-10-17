@@ -21,7 +21,7 @@ STATUS = {
 }
 
 # Where each app keeps its API
-API = {"sonarr": "/api/v3", "radarr": "/api/v3", "prowlarr": "/api/v1", "seerr": "/api/v1"}
+API = {"sonarr": "/api/v3", "radarr": "/api/v3", "prowlarr": "/api/v1", "seerr": "/api/v1", "bazarr": "/api"}
 
 
 class Service:

@@ -95,6 +95,18 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
   formats would pick better releases.
 - **Backups** turned off, or saved to a folder that isn't mapped, so they're lost when the container is updated.
 
+### Bazarr
+
+Connect Bazarr under **Settings** (its API key is in Settings > General > Security):
+
+- Anything on Bazarr's own health list, such as no languages profile or a root folder it can't reach.
+- Not connected to Sonarr or Radarr (or not to one you use), or looking for them at `localhost`.
+- No default languages profile, so new series or films get no subtitles.
+- No subtitle providers, or every provider paused.
+- Bazarr seeing Sonarr or Radarr's folders at a different path with no path mapping, or not at all (needs your Unraid
+  settings).
+- Backups set to Manually.
+
 ### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
