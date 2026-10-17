@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr & Radarr", tags: "Tags", anime: "Anime" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr & Radarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr" };
 let dashArea = "all";
 let showDismissed = false;
 
@@ -131,7 +131,10 @@ function findingCard(f, reload) {
     reload();
   });
   actions.push(dismiss);
-  if (f.link) actions.push(el("a", { href: f.link, target: "_blank", rel: "noopener", text: "TRaSH guide" }));
+  if (f.link) {
+    const own = f.link.startsWith("#");
+    actions.push(el("a", { href: f.link, target: own ? undefined : "_blank", rel: own ? undefined : "noopener", text: linkLabel(f.link) }));
+  }
 
   return el("div", { class: "panel" },
     el("div", { class: "row-wrap" },
@@ -623,6 +626,109 @@ function accountPanels() {
   ];
 }
 
+function linkLabel(link) {
+  if (link.startsWith("#/guides")) return "Setuparr's guide";
+  const host = (() => { try { return new URL(link).hostname; } catch { return ""; } })();
+  return { "trash-guides.info": "TRaSH guide", "docs.unraid.net": "Unraid docs", "forums.unraid.net": "Unraid forum",
+    "unraid.net": "Unraid", "wiki.servarr.com": "Servarr wiki", "wiki.bazarr.media": "Bazarr wiki",
+    "docs.linuxserver.io": "LinuxServer docs" }[host] || "More about this";
+}
+
+// ---------- Guides ----------
+
+// Extra Parameters are passed straight to docker run. Each entry: flag, what it does, when to use it, an example
+const EXTRA_PARAMETERS = [
+  { title: "GPUs", flags: [
+    { flag: "--runtime=nvidia", what: "Runs the container with the Nvidia Container Toolkit, which the Nvidia Driver plugin installs.",
+      when: "Plex, Jellyfin, Emby or Tdarr transcoding on an Nvidia GPU. Also add the variables NVIDIA_VISIBLE_DEVICES (your GPU's ID from the plugin page, or all) and NVIDIA_DRIVER_CAPABILITIES=all.",
+      example: "--runtime=nvidia" },
+    { flag: "--gpus", what: "Docker's newer way to give a container Nvidia GPUs. Also needs the Nvidia Driver plugin.",
+      when: "Instead of --runtime=nvidia, for images whose instructions use it.", example: "--gpus=all" },
+    { flag: "--device=/dev/dri", what: "Gives the container the Intel or AMD GPU.",
+      when: "Hardware transcoding on Intel Quick Sync or AMD. Adding a Device in the template (Add another Path, Port, Variable, Label or Device) does the same and is easier to see.",
+      example: "--device=/dev/dri" },
+  ] },
+  { title: "Memory and CPU", flags: [
+    { flag: "--memory", what: "The most memory the container can use. If it goes over, Docker stops the app inside it instead of Unraid running out of memory.",
+      when: "Apps that can grow without limit: Plex or Jellyfin transcoding to RAM, browsers, game servers, anything that has crashed the server before.",
+      example: "--memory=4g" },
+    { flag: "--cpus", what: "How much CPU time the container can use, in whole CPUs.",
+      when: "Stopping a busy app (Tdarr, Handbrake, a game server) from slowing everything else down.", example: "--cpus=2" },
+    { flag: "--cpuset-cpus", what: "Which CPU cores the container may run on.",
+      when: "Keeping containers off the cores you give VMs. Settings > CPU Pinning does the same with checkboxes.", example: "--cpuset-cpus=2-5" },
+    { flag: "--shm-size", what: "The size of shared memory (/dev/shm). Docker's default is only 64 MB.",
+      when: "Apps that run a browser (FlareSolverr, Firefox, Chrome) or a Postgres database, and crash or log \"no space left on device\" for /dev/shm.",
+      example: "--shm-size=1g" },
+    { flag: "--ulimit", what: "Raises a limit inside the container, most often how many files it can have open.",
+      when: "Apps that log \"too many open files\".", example: "--ulimit nofile=65536:65536" },
+  ] },
+  { title: "Networking", flags: [
+    { flag: "--network=container:", what: "Runs the container inside another container's network, so all its traffic goes the same way.",
+      when: "Sending qBittorrent, Prowlarr or others through a VPN container like Gluetun. Unraid 6.12 and later also offer Network Type: Container. Remove this container's own ports and add them to the VPN container instead, and start the VPN container first (with a wait) in the Docker page's start order.",
+      example: "--network=container:gluetun" },
+    { flag: "--dns", what: "The DNS server the container uses.",
+      when: "A container can't look up names, often because Pi-hole or AdGuard runs on Unraid itself or the router's DNS isn't reachable from it.",
+      example: "--dns=1.1.1.1" },
+    { flag: "--hostname", what: "The name the container calls itself.", when: "Apps that show or announce their name, like Plex's server name or a Home Assistant instance.",
+      example: "--hostname=plex" },
+    { flag: "--mac-address", what: "Gives a container with its own IP address (br0) a fixed MAC address.",
+      when: "So your router's DHCP reservation still matches after the container is recreated. Use an address starting 02:, which is never a real device's.",
+      example: "--mac-address=02:42:c0:a8:01:32" },
+    { flag: "--add-host", what: "Adds a name the container can look up.", when: "Letting a container reach Unraid itself by name.",
+      example: "--add-host=host.docker.internal:host-gateway" },
+  ] },
+  { title: "Logs and health checks", flags: [
+    { flag: "--log-opt", what: "Limits this container's log.",
+      when: "Usually not needed: Settings > Docker > Docker LOG rotation does it for every container. Use it for one very chatty container.",
+      example: "--log-opt max-size=10m --log-opt max-file=1" },
+    { flag: "--health-cmd", what: "A command Docker runs now and then to see if the app is working. The Docker page then shows healthy or unhealthy.",
+      when: "Apps whose image has no health check, so you can see at a glance when one has hung.",
+      example: "--health-cmd=\"curl -fs http://localhost:8989/ping || exit 1\" --health-interval=60s" },
+    { flag: "--no-healthcheck", what: "Turns off the image's own health check.",
+      when: "A health check that fills the log or keeps disks awake.", example: "--no-healthcheck" },
+  ] },
+  { title: "Permissions and security", flags: [
+    { flag: "--cap-add", what: "Gives the container one extra Linux capability, instead of everything Privileged gives.",
+      when: "VPN containers (Gluetun, binhex's VPN images) need NET_ADMIN, together with --device=/dev/net/tun.",
+      example: "--cap-add=NET_ADMIN --device=/dev/net/tun" },
+    { flag: "--privileged", what: "Gives the container full control of Unraid: every disk, device and kernel setting. The template's Privileged switch does the same.",
+      when: "Almost never. Use --device or --cap-add for the one thing the app needs, so a compromised app can't take over the server.",
+      example: "", avoid: true },
+    { flag: "--restart", what: "Docker's own restart policy.",
+      when: "Not on Unraid. Docker then starts the container as soon as Docker starts, ignoring Unraid's start order and wait times, and starts it again after you stop it. Use Autostart on the Docker page instead.",
+      example: "", avoid: true },
+    { flag: "--security-opt", what: "Extra security settings for the container.",
+      when: "no-new-privileges stops anything in the container gaining more rights than it started with. Check the container still starts afterwards: a few images need those rights.",
+      example: "--security-opt=no-new-privileges=true" },
+    { flag: "--tmpfs", what: "A folder kept in RAM, emptied when the container stops.",
+      when: "Plex or Jellyfin transcoding to RAM: point the transcoder at it. Always set a size, or it can use all your memory.",
+      example: "--tmpfs /transcode:size=4g" },
+    { flag: "--user", what: "Runs the app as a given user and group.",
+      when: "Images with no PUID and PGID variables. On Unraid that's usually nobody (99) and users (100).", example: "--user=99:100" },
+  ] },
+];
+
+function showGuides() {
+  view.replaceChildren(
+    el("h1", { text: "Guides" }),
+    el("div", { class: "panel" },
+      el("h2", { text: "Extra Parameters" }),
+      el("p", { class: "muted" }, "To find it, edit a container on Unraid's Docker page and switch on ", el("strong", { text: "Advanced View" }),
+        " at the top right. Extra Parameters are added to the docker run command as they are, separated by spaces. ",
+        "Post Arguments is different: it's passed to the app inside the container. If a container won't start after a change, ",
+        "the error is shown when you press Apply."),
+      el("p", { class: "muted small", text: "Setuparr checks for --restart and Privileged, and whether containers given a GPU can use one." })),
+    ...EXTRA_PARAMETERS.map((section) => el("div", { class: "panel" },
+      el("h2", { text: section.title }),
+      el("dl", { class: "guide" }, ...section.flags.flatMap((f) => [
+        el("dt", { id: f.flag.replace(/^--|[=:].*$/g, "") }, el("code", { text: f.flag }), f.avoid ? el("span", { class: "badge warn", text: "Avoid" }) : null),
+        el("dd", {},
+          el("p", { text: f.what }),
+          el("p", { class: "muted", text: f.when }),
+          f.example ? el("p", {}, "Example: ", el("code", { text: f.example })) : null),
+      ])))));
+}
+
 // ---------- Contact ----------
 
 function showContact() {
@@ -652,6 +758,7 @@ async function route() {
     if (name === "logs") await showLogs();
     else if (name === "settings") await showSettings(sub || "general");
     else if (name === "contact") showContact();
+    else if (name === "guides") showGuides();
     else if (name === "unraid") await showUnraid();
     else await showDashboard();
   } catch (e) {

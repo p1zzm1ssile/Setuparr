@@ -37,6 +37,7 @@ From the Docker templates and share settings you give it on the **Unraid** page 
 - **Start order:** a container that goes through another container's network (qBittorrent through Gluetun) but starts
   before it, or starts when the other doesn't, and media containers that don't start by themselves.
 - **Docker's log rotation** turned off, so logs can fill docker.img.
+- **Extra Parameters:** Docker's `--restart` used instead of Unraid's Autostart, and containers running as Privileged.
 - **Disks:** a disk that's disabled, emulated, missing or unmountable, read or write errors, no parity drive, no
   scheduled parity check, and a pool or the flash drive over 90% full.
 - **Alerts** only shown in the web UI, so a failed disk goes unnoticed.
@@ -95,6 +96,18 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
   formats would pick better releases.
 - **Backups** turned off, or saved to a folder that isn't mapped, so they're lost when the container is updated.
 
+### Bazarr
+
+Connect Bazarr under **Settings** (its API key is in Settings > General > Security):
+
+- Anything on Bazarr's own health list, such as no languages profile or a root folder it can't reach.
+- Not connected to Sonarr or Radarr (or not to one you use), or looking for them at `localhost`.
+- No default languages profile, so new series or films get no subtitles.
+- No subtitle providers, or every provider paused.
+- Bazarr seeing Sonarr or Radarr's folders at a different path with no path mapping, or not at all (needs your Unraid
+  settings).
+- Backups set to Manually.
+
 ### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
@@ -112,6 +125,12 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
 - An anime episode format without the absolute episode number.
 - Indexers with no anime categories.
 - Seerr with no anime root folder or profile, so requested anime lands in your TV setup.
+
+### Guides
+
+The **Guides** page explains the Extra Parameters you can give a container in Unraid's Advanced View: GPUs, memory and
+CPU limits, networking (like sending a container through a VPN container), logs and health checks, and permissions,
+with what each does, when to use it and an example.
 
 ### Coming next
 

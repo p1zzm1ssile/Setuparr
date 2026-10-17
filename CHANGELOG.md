@@ -22,6 +22,11 @@
 - **Sonarr and Radarr:** their own health warnings, no login or no password on your network, Set Permissions turned
   on, quality profiles (no custom formats, all scores 0, a minimum score nothing can reach, no upgrades) and backups
   that are off or saved where they're lost on update. Shown under **Sonarr & Radarr** on the Dashboard.
+- **Bazarr:** connect it under Settings. Setuparr checks its health list, its link to Sonarr and Radarr, default
+  languages profiles, subtitle providers, path mappings against your Unraid templates, and backups.
+- **Guides page** explaining Unraid's Extra Parameters, and checks for `--restart` in Extra Parameters and containers
+  running as Privileged. Only the flags' names are kept, never their values.
+- A finding's link now says where it goes (Unraid docs, Servarr wiki, Bazarr wiki...) instead of always "TRaSH guide".
 
 ## 0.5.0
 
