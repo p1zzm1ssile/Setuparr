@@ -96,3 +96,41 @@ def test_a_leftover_file_can_be_deleted(server):
     assert json.loads(data)["leftover"] == "unraid-config.tar.gz"
     request(server, "POST", "/api/unraid/delete-leftover", {}, {**HEADER, "Cookie": cookie})
     assert not os.path.exists(path)
+
+
+def scheduled(port, key, headers=None):
+    import http.client
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    conn.request("POST", f"/api/unraid/push?key={key}", body=archive(), headers=headers or {})
+    response = conn.getresponse()
+    return response.status, response.read().decode()
+
+
+def test_the_nightly_script_reports_only_whats_new(server):
+    cookie = login_cookie(server)
+    _, data = request(server, "POST", "/api/unraid/schedule", {}, {**HEADER, "Cookie": cookie})
+    key = json.loads(data)["key"]
+    # The same key every time it's shown, and it can be used again and again
+    _, again = request(server, "POST", "/api/unraid/schedule", {}, {**HEADER, "Cookie": cookie})
+    assert json.loads(again)["key"] == key
+
+    # sonarr's /data mapping isn't a TRaSH layout with a download client, so there's something to report
+    status, text = scheduled(server, key)
+    assert status == 200
+    lines = text.strip().split("\n")
+    assert lines[0] in ("alert", "warning", "none")
+    if lines[0] != "none":
+        assert len(lines) == 3 and lines[1].startswith("Setuparr found")
+    # Nothing changed, so nothing is new the second time
+    assert scheduled(server, key) == (200, "none\n")
+
+    # A new key stops the old script working
+    _, data = request(server, "POST", "/api/unraid/schedule", {"new": True}, {**HEADER, "Cookie": cookie})
+    assert json.loads(data)["key"] != key
+    status, text = scheduled(server, key)
+    assert status == 403 and "key" in text
+
+
+def test_the_scheduled_key_needs_a_login(server):
+    response, _ = request(server, "POST", "/api/unraid/schedule", {}, HEADER)
+    assert response.status == 401

@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import SEVERITY_ORDER, anime, arr, bazarr, downloads, library, tags, unraid
+from checks import PROBLEM, SEVERITY_ORDER, WARNING, anime, plural, arr, bazarr, downloads, library, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -24,6 +24,7 @@ RESULTS_FILE = os.path.join(config.config_dir, "results.json")
 SNAPSHOT_FILE = os.path.join(config.config_dir, "unraid.json")
 FIXES_FILE = os.path.join(config.config_dir, "fixes.json")
 MODERATION_FILE = os.path.join(config.config_dir, "moderation.json")
+SCHEDULE_FILE = os.path.join(config.config_dir, "schedule.json")
 MODERATION_SECONDS = 24 * 3600
 # Dropped into the config folder from Unraid's terminal, imported, then deleted
 IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip", "unraid-config.tar")
@@ -65,10 +66,11 @@ def snapshot():
     return _read(SNAPSHOT_FILE, None)
 
 
-def import_files(files, hardware=None, version=None):
-    """[(name, bytes)] from an upload or the config folder, and what the terminal command adds: lspci -n's PCI IDs
-    and the Unraid version. Returns a summary."""
-    snap = unraid.build_snapshot(unraid.read_upload(files), hardware, version)
+def import_files(files, hardware=None, version=None, host=None):
+    """[(name, bytes)] from an upload or the config folder, and what the terminal command adds: lspci -n's PCI IDs,
+    the Unraid version, and the installed containers, appdata folders and Docker's unused space (host). Returns a
+    summary."""
+    snap = unraid.build_snapshot(unraid.read_upload(files), hardware, version, host)
     old = snapshot() or {}
     snap["ignored"] = [n for n in old.get("ignored", []) if any(c["name"] == n for c in snap["containers"])]
     snap["imported_at"] = time.time()
@@ -129,6 +131,54 @@ def use_push_token(token):
             _push_tokens.pop(known, None)
             return True
     return False
+
+
+# A key for a script on Unraid that sends the files on a schedule and shows new problems as an Unraid notification.
+# Unlike the one-time links it keeps working until a new one is made.
+SCAN_WAIT_SECONDS = 600
+
+
+def schedule_key(new=False):
+    """The scheduled scan key, made the first time it's asked for."""
+    data = _read(SCHEDULE_FILE, {})
+    if new or not data.get("key"):
+        data = {"key": secrets.token_urlsafe(24), "notified": []}
+        _write(SCHEDULE_FILE, data)
+        logger.log("ACTION", "Made a new key for scheduled scans")
+    return data["key"]
+
+
+def use_schedule_key(key):
+    known = _read(SCHEDULE_FILE, {}).get("key")
+    return bool(known) and hmac.compare_digest(known, key or "")
+
+
+def scan_and_report():
+    """Run the checks now and say what's new since the last scheduled scan, as (importance, subject, description)
+    for Unraid's notify script, or None if nothing is. Only problems and warnings count, and dismissed ones don't."""
+    deadline = time.time() + SCAN_WAIT_SECONDS
+    # If a run is already going, it may have started before the new files arrived, so wait and run again
+    while not run():
+        if time.time() > deadline:
+            raise ValueError("the checks were busy for too long")
+        time.sleep(1)
+    current = [f for f in results()["findings"] if f["severity"] in (PROBLEM, WARNING) and not f["dismissed"]]
+    data = _read(SCHEDULE_FILE, {})
+    notified = set(data.get("notified", []))
+    new = [f for f in current if f["id"] not in notified]
+    # Remember what's there now, so a fixed problem that comes back is reported again
+    data["notified"] = [f["id"] for f in current]
+    _write(SCHEDULE_FILE, data)
+    if not new:
+        return None
+    problems = [f for f in new if f["severity"] == PROBLEM]
+    counts = [plural(len(problems), "new problem")] if problems else []
+    if len(new) > len(problems):
+        counts.append(plural(len(new) - len(problems), "new warning"))
+    description = "; ".join(f"{f['app']}: {f['title']}" for f in new[:5])
+    if len(new) > 5:
+        description += f"; and {len(new) - 5} more"
+    return ("alert" if problems else "warning", f"{app_info.NAME} found {' and '.join(counts)}", description)
 
 
 def import_from_config_folder():

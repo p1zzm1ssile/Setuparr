@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+- **Cleanup:** appdata folders no installed container uses, templates Unraid keeps for containers you've removed, and
+  more than 1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything: each finding lists what's
+  left over and how to move it out safely.
+- **Templates of removed containers are left out of the checks by themselves** when you use the terminal command, so
+  you no longer need to untick them.
+- **Check every night, with Unraid notifications:** the Unraid page has a script for the User Scripts plugin. It sends
+  the files to Setuparr on your own network every night, runs the checks, and shows any new problem or warning as an
+  Unraid notification. Nothing goes to the internet. It uses a key that keeps working, unlike the one-time command;
+  **Make a new key** stops an old copy of the script working.
+- The terminal command now also sends the names of your installed containers and of the folders in appdata, and how
+  much space Docker's unused images and volumes take. **Get the command again** to get the cleanup checks.
+
 ## 0.6.0
 
 - **More of Unraid's own settings are checked:**

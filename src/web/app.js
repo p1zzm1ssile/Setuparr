@@ -278,16 +278,7 @@ async function showUnraid(message) {
   getCommand.addEventListener("click", async () => {
     try {
       const t = await post("/api/unraid/token");
-      // Also sends the Unraid version and lspci -n's PCI IDs (class:vendor:device, no names), for the version and
-      // hardware checks, and the disks' state and the containers' start order from outside /boot/config
-      commandBox.value = "cd /boot/config && tar -cz plugins/dockerMan/templates-user shares " +
-        "$(ls -d docker.cfg share.cfg network.cfg ident.cfg plugins/dynamix/dynamix.cfg plugins/*.plg " +
-        "plugins/appdata.backup*/config.json plugins/compose.manager/projects 2>/dev/null) " +
-        "$(test -f /var/local/emhttp/disks.ini && echo -C /var/local/emhttp disks.ini) " +
-        "$(test -f /var/lib/docker/unraid-autostart && echo -C /var/lib/docker unraid-autostart) | " +
-        `curl -sS --data-binary @- -H "X-Unraid-Version: $(cat /etc/unraid-version)" ` +
-        `-H "X-Hardware: $(lspci -n | awk '{print $2 $3}' | tr '\\n' ' ')" ` +
-        `'${location.origin}/api/unraid/push?token=${t.token}'`;
+      commandBox.value = "cd /boot/config && " + sendCommand(`token=${t.token}`);
       commandRow.classList.remove("hidden");
       copy.disabled = false;
       getCommand.textContent = "Get a new command";
@@ -307,6 +298,31 @@ async function showUnraid(message) {
     copy.textContent = "Copied";
     setTimeout(() => (copy.textContent = "Copy"), 2000);
   });
+
+  // A script for User Scripts that sends the files every night and turns anything new into an Unraid notification
+  const scriptBox = el("textarea", { class: "script hidden", readonly: true, rows: 14, "aria-label": "Script" });
+  const scriptActions = el("div", { class: "card-actions hidden" });
+  const scriptResult = el("p", { class: "muted small", role: "status" });
+  async function showScript(fresh) {
+    try {
+      const k = await post("/api/unraid/schedule", { new: fresh });
+      scriptBox.value = scheduledScript(k.key);
+      scriptBox.classList.remove("hidden");
+      scriptActions.classList.remove("hidden");
+      showScriptButton.classList.add("hidden");
+      scriptResult.textContent = fresh ? "Made a new key. Paste this script into User Scripts again: the old one won't work any more." : "";
+    } catch (e) { flash(scriptResult, false, e.message); }
+  }
+  const showScriptButton = el("button", { type: "button", class: "primary", text: "Show the script", onclick: () => showScript(false) });
+  const copyScript = el("button", { type: "button", text: "Copy", onclick: async () => {
+    scriptBox.select();
+    try { await navigator.clipboard.writeText(scriptBox.value); } catch { document.execCommand("copy"); }
+    copyScript.textContent = "Copied";
+    setTimeout(() => (copyScript.textContent = "Copy"), 2000);
+  } });
+  scriptActions.append(copyScript, el("button", { type: "button", text: "Make a new key", onclick: () => {
+    if (confirm("Make a new key? The script you've already added to Unraid will stop working until you paste the new one.")) showScript(true);
+  } }));
 
   const content = [
     el("h1", { text: "Unraid" }),
@@ -328,7 +344,7 @@ async function showUnraid(message) {
     el("div", { class: "notice" },
       el("strong", { text: "Passwords, API keys and personal details are removed. " }),
       "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; ",
-      "the few Unraid settings it checks; each disk's slot, state, size, free space and error count; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; and the PCI IDs of your devices, which say what kind of GPU and network card you have. ",
+      "the few Unraid settings it checks; each disk's slot, state, size, free space and error count; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; the PCI IDs of your devices, which say what kind of GPU and network card you have; the names of your installed containers and of the folders in appdata; and how much space Docker's unused images and volumes take. ",
       "Everything else (passwords, API keys, VPN details, email settings, IP addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the files are read and never saved. ",
       "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
     el("div", { class: "panel" },
@@ -352,6 +368,14 @@ async function showUnraid(message) {
       el("div", { class: "row-wrap" },
         el("label", { class: "button" }, "Choose files…", files),
         el("label", { class: "button" }, "Choose a folder…", folder))),
+    el("div", { class: "panel" },
+      el("h2", { text: "Check every night, with Unraid notifications" }),
+      el("p", { class: "muted small", text: "A script on Unraid sends the same files to Setuparr every night, runs the checks, and shows any new problem or warning as an Unraid notification, like the ones for a failed disk. It only talks to Setuparr on your own network, nothing goes to the internet, and you can read every line before you add it." }),
+      el("ol", {},
+        el("li", {}, "Install ", el("strong", { text: "User Scripts" }), " from the Apps tab, if you don't have it."),
+        el("li", {}, "Go to Settings > User Scripts > Add New Script and call it setuparr. Click its cog, then Edit Script, paste the script in and press Save Changes."),
+        el("li", {}, "Set its schedule to Scheduled Daily, then press Run Script once to check it works.")),
+      el("div", { class: "card-actions" }, showScriptButton), scriptBox, scriptActions, scriptResult),
     result,
   ];
 
@@ -360,7 +384,7 @@ async function showUnraid(message) {
     content.push(el("div", { class: "panel" },
       el("h2", { text: "What was imported" }),
       el("p", { class: "muted small" }, `Imported ${when(s.imported_at)}. `,
-        "Unraid keeps templates for containers you've removed, so untick any you don't use, or they'll be checked too."),
+        "The terminal command leaves out templates of containers you've removed. If you chose the files instead, untick any you don't use, or they'll be checked too."),
       el("table", {},
         el("thead", {}, el("tr", {}, el("th", { text: "Check" }), el("th", { text: "Container" }), el("th", { text: "Type" }), el("th", { text: "Folder mappings" }))),
         el("tbody", {}, s.containers.map((c) => el("tr", {},
@@ -635,6 +659,42 @@ function linkLabel(link) {
 }
 
 // ---------- Guides ----------
+
+// What the terminal command and the nightly script send: the settings files, the Unraid version, lspci -n's PCI IDs
+// (class:vendor:device, no names) for the version and hardware checks, the disks' state and the start order from
+// outside /boot/config, and for the cleanup checks the names of the containers Docker has, the names of the folders
+// in appdata and how much space Docker's unused images and volumes take. Run from /boot/config.
+function sendCommand(query, curlOptions = "") {
+  return "tar -cz plugins/dockerMan/templates-user shares " +
+    "$(ls -d docker.cfg share.cfg network.cfg ident.cfg plugins/dynamix/dynamix.cfg plugins/*.plg " +
+    "plugins/appdata.backup*/config.json plugins/compose.manager/projects 2>/dev/null) " +
+    "$(test -f /var/local/emhttp/disks.ini && echo -C /var/local/emhttp disks.ini) " +
+    "$(test -f /var/lib/docker/unraid-autostart && echo -C /var/lib/docker unraid-autostart) | " +
+    `curl -sS ${curlOptions}--data-binary @- -H "X-Unraid-Version: $(cat /etc/unraid-version)" ` +
+    `-H "X-Hardware: $(lspci -n | awk '{print $2 $3}' | tr '\\n' ' ')" ` +
+    `-H "X-Containers: $(docker ps -a --format '{{.Names}}' 2>/dev/null | tr '\\n' ' ')" ` +
+    `-H "X-Appdata: $(ls -1 /mnt/user/appdata 2>/dev/null | tr '\\n' '/')" ` +
+    `-H "X-Docker: $(docker system df --format '{{.Type}}|{{.Reclaimable}}' 2>/dev/null | tr '\\n' ';')" ` +
+    `'${location.origin}/api/unraid/push?${query}'`;
+}
+
+function scheduledScript(key) {
+  const notify = "/usr/local/emhttp/webGui/scripts/notify -e Setuparr";
+  return [
+    "#!/bin/bash",
+    "# Setuparr's nightly check. Sends Unraid's settings to Setuparr on your own network, runs the checks,",
+    "# and shows anything new as an Unraid notification. Nothing goes to the internet.",
+    "cd /boot/config || exit 1",
+    `reply=$(${sendCommand(`key=${key}`, "--max-time 900 ")})`,
+    "level=$(printf '%s\\n' \"$reply\" | sed -n 1p)",
+    "case \"$level\" in",
+    "  none) echo \"Setuparr: nothing new\" ;;",
+    `  alert|warning) ${notify} -i "$level" -s "$(printf '%s\\n' "$reply" | sed -n 2p)" -d "$(printf '%s\\n' "$reply" | sed -n 3p)" -l '${location.origin}' ;;`,
+    `  *) ${notify} -i warning -s "Setuparr's nightly check didn't work" -d "\${reply:-Setuparr could not be reached at ${location.origin}}" ;;`,
+    "esac",
+    "",
+  ].join("\n");
+}
 
 // Extra Parameters are passed straight to docker run. Each entry: flag, what it does, when to use it, an example
 const EXTRA_PARAMETERS = [

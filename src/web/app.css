@@ -374,6 +374,19 @@ ul.files li.unwanted .fname { color: var(--muted); text-decoration: line-through
 
 .copy-row { display: flex; gap: 0.5rem; }
 .copy-row input { flex: 1; }
+textarea.script {
+  width: 100%;
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre;
+  overflow-x: auto;
+}
 
 /* Contact */
 .row-wrap { display: flex; flex-wrap: wrap; gap: 0.5rem; }

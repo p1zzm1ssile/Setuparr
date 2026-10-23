@@ -9,7 +9,9 @@ plugins/dynamix/dynamix.cfg), the installed plugins (/boot/config/plugins/*.plg)
 and Appdata Backup's settings. The terminal command also sends the Unraid
 version, the PCI IDs of the server's devices (lspci -n), the state of the disks
 (/var/local/emhttp/disks.ini) and the order containers start in
-(/var/lib/docker/unraid-autostart).
+(/var/lib/docker/unraid-autostart), the names of the containers Docker has
+(installed ones), the names of the folders in appdata, and how much space
+Docker's unused images and volumes take.
 
 Those files can hold VPN passwords, API keys and other personal details, so
 they're read in memory and only what the checks need is kept: each container's
@@ -20,7 +22,8 @@ look at (never IP addresses, server names, email settings or time zones); each
 disk's slot name, state, size, free space, errors and temperature (never serial
 numbers or device names); each plugin's file name, where it came from and the
 Unraid versions it's made for; and Appdata Backup's schedule, destination and
-skipped containers. Nothing else is stored: not passwords, keys, other
+skipped containers; the names of appdata folders and installed containers; and
+the size of Docker's unused images and volumes. Nothing else is stored: not passwords, keys, other
 variables, network names or time zones.
 """
 
@@ -57,6 +60,10 @@ BACKUP_FOLDERS = ("appdata.backup", "appdata.backup.beta")
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 50 * 1024 * 1024
 MAX_FILES = 5000
+MAX_APPDATA = 1000
+# The cleanup finding for Docker's unused images and volumes only shows from this size
+DOCKER_UNUSED_BYTES = 1024 ** 3
+APPDATA = re.compile(r"^/mnt/[^/]+/appdata(?:/([^/]+))?")
 COMPOSE_NAMES = {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
 
 # What a container is, from its image name
@@ -469,7 +476,36 @@ def parse_share(name, data):
     return {"name": name[:-4], **{k: values[k] for k in keep if k in values}}
 
 
-def build_snapshot(raw, hardware=None, version=None):
+def parse_size(text):
+    """Docker's sizes, such as 1.2GB or 300kB, in bytes."""
+    m = re.match(r"\s*([\d.]+)\s*([kKMGT]?)B", text or "")
+    if not m:
+        return 0
+    return int(float(m.group(1)) * 1000 ** " KMGT".index(m.group(2).upper() or " "))
+
+
+def parse_docker_df(header):
+    """docker system df's Type|Reclaimable lines, joined with ;. Only the unused images and volumes are kept."""
+    out = {}
+    for part in (header or "").split(";"):
+        kind, _, size = part.partition("|")
+        key = {"Images": "images", "Local Volumes": "volumes"}.get(kind.strip())
+        if key:
+            out[key] = parse_size(size)
+    return out or None
+
+
+def parse_host(host):
+    """What the terminal command adds about the server itself: the containers Docker has (space-separated), the
+    folders in appdata (separated by /, which can't be in a name) and docker system df."""
+    host = host or {}
+    installed = (host.get("containers") or "").split()
+    appdata = sorted({n.strip() for n in (host.get("appdata") or "").split("/") if n.strip()})[:MAX_APPDATA]
+    return {"installed": installed or None, "appdata": appdata if host.get("appdata") is not None else None,
+            "docker_unused": parse_docker_df(host.get("docker"))}
+
+
+def build_snapshot(raw, hardware=None, version=None, host=None):
     containers, seen = [], set()
     for name, data in raw["templates"]:
         c = parse_template(name, data)
@@ -499,6 +535,14 @@ def build_snapshot(raw, hardware=None, version=None):
         # Only whether it matches is kept, not the time zone
         if server_tz and (tz or c["source"] == "compose"):
             c["tz_differs"] = same_zone(tz) != same_zone(server_tz)
+    host = parse_host(host)
+    unused_templates = []
+    if host["installed"]:
+        # Unraid keeps the template of every container you've ever installed
+        installed = set(host["installed"])
+        unused_templates = sorted((c["name"] for c in containers if c["source"] == "template" and c["name"] not in installed),
+                                  key=str.lower)
+        containers = [c for c in containers if c["source"] != "template" or c["name"] in installed]
     snap = {"containers": sorted(containers, key=lambda c: c["name"].lower()),
             "shares": sorted(shares, key=lambda s: s["name"].lower()),
             "settings": settings}
@@ -515,6 +559,13 @@ def build_snapshot(raw, hardware=None, version=None):
         snap["hardware"] = parse_hardware(hardware)
     if parse_version(version):
         snap["unraid_version"] = parse_version(version)
+    if host["installed"]:
+        snap["installed"] = sorted(set(host["installed"]), key=str.lower)
+        snap["unused_templates"] = unused_templates
+    if host["appdata"] is not None:
+        snap["appdata"] = host["appdata"]
+    if host["docker_unused"]:
+        snap["docker_unused"] = host["docker_unused"]
     return snap
 
 
@@ -615,6 +666,7 @@ def check(snapshot, moderation=None):
     findings += check_smb(snapshot["shares"])
     findings += check_mover(settings.get("share"), snapshot["shares"], arrs + clients, snapshot.get("disks"))
     findings += check_backup(snapshot.get("backup"), snapshot.get("plugins"), snapshot["shares"], containers)
+    findings += check_cleanup(snapshot)
     return sent(snapshot, findings)
 
 
@@ -1314,6 +1366,72 @@ def check_backup(backup, plugins, shares, containers):
 # Plugins and drivers
 
 
+def size_text(n):
+    for unit in ("TB", "GB", "MB"):
+        if n >= 1000 ** " KMGT".index(unit[0]):
+            return f"{n / 1000 ** ' KMGT'.index(unit[0]):.1f} {unit}"
+    return f"{n} bytes"
+
+
+def unused_appdata(appdata, containers, installed=()):
+    """Folders in appdata that no container maps, and that aren't named after an installed one (which may have no
+    template). None if a container maps the whole of appdata, since then every folder looks used."""
+    used = {n.lower() for n in [c["name"] for c in containers] + list(installed)}
+    for c in containers:
+        for m in c["mounts"]:
+            match = APPDATA.match(clean(m["host"]))
+            if match and not match.group(1):
+                return None
+            if match:
+                used.add(match.group(1).lower())
+    return [n for n in appdata if n.lower() not in used]
+
+
+def check_cleanup(snapshot):
+    """Leftovers from removed containers: appdata folders, templates, and Docker's unused images and volumes."""
+    findings = []
+    containers = snapshot["containers"]
+    unused = unused_appdata(snapshot.get("appdata") or [], containers, snapshot.get("installed") or ())
+    if unused:
+        findings.append(finding(
+            "appdata-unused", AREA, TIP, "Unraid",
+            f"{plural(len(unused), 'appdata folder doesn', 'appdata folders don')}'t belong to any container",
+            "No installed container maps " + ("this folder" if len(unused) == 1 else "these folders") + ", so they're "
+            "probably left over from containers you've removed. They take up space on your cache"
+            + (", and Appdata Backup still backs them up." if snapshot.get("backup") else "."),
+            steps=["Check each one first. A folder can belong to a plugin, or to a compose container that maps it by "
+                   "a relative path.",
+                   "Move them out rather than deleting them straight away. In Unraid's terminal, for each one, run: "
+                   "mkdir -p /mnt/user/appdata-removed && mv \"/mnt/user/appdata/NAME\" /mnt/user/appdata-removed/",
+                   "Once everything has worked for a week or two, delete /mnt/user/appdata-removed."],
+            items=unused))
+    templates = snapshot.get("unused_templates") or []
+    if templates:
+        findings.append(finding(
+            "templates-unused", AREA, TIP, "Unraid",
+            f"Unraid still has templates for {plural(len(templates), 'container')} you've removed",
+            "Unraid keeps the template of every container you've installed, so you can reinstall it with the same "
+            "settings. Setuparr leaves these out of its checks, but they fill the template list in Add Container.",
+            steps=["In Unraid, go to Apps > Previous Apps and remove the ones you won't reinstall."],
+            items=templates))
+    docker = snapshot.get("docker_unused") or {}
+    images, volumes = docker.get("images", 0), docker.get("volumes", 0)
+    if images + volumes >= DOCKER_UNUSED_BYTES:
+        steps = []
+        if images:
+            steps.append("In Unraid's terminal, run docker image prune -a to delete the images no container uses. "
+                         "Images of stopped containers are kept.")
+        if volumes:
+            steps.append("Run docker volume prune to delete the volumes no container uses.")
+        findings.append(finding(
+            "docker-unused", AREA, TIP, "Unraid", f"Docker is keeping {size_text(images + volumes)} it doesn't use",
+            "These are old versions left behind by updates and the images and volumes of containers you've removed"
+            + (f" ({size_text(images)} of images, {size_text(volumes)} of volumes)" if images and volumes else "")
+            + ". They fill docker.img or the Docker folder, and when that's full, containers stop.",
+            steps=steps))
+    return findings
+
+
 def plain(text):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", text or "")).strip()
 
@@ -1520,4 +1638,6 @@ def summary(snapshot):
             "disks": len(snapshot["disks"]) if "disks" in snapshot else None,
             "autostart": len(snapshot["autostart"]) if "autostart" in snapshot else None,
             "backup": "backup" in snapshot,
-            "unraid_version": snapshot.get("unraid_version")}
+            "unraid_version": snapshot.get("unraid_version"),
+            "unused_templates": len(snapshot["unused_templates"]) if "unused_templates" in snapshot else None,
+            "appdata": len(snapshot["appdata"]) if "appdata" in snapshot else None}

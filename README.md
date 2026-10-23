@@ -60,6 +60,8 @@ From the plugins and PCI IDs the terminal command sends:
   doesn't have.
 - A **Realtek RTL8125, RTL8126 or RTL8168** network card on Unraid's built-in driver, and a **Coral** accelerator with
   no driver.
+- **Cleanup:** appdata folders no installed container uses, templates for containers you've removed, and more than
+  1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything itself.
 
 ### Download clients (Sonarr, Radarr, qBittorrent, Transmission, Deluge)
 
@@ -147,14 +149,17 @@ you send it: the Docker templates, the share settings and Compose Manager's comp
 It also reads Unraid's `docker.cfg`, `share.cfg`, `network.cfg`, `ident.cfg` and `plugins/dynamix/dynamix.cfg`, the
 installed plugins' `.plg` files and Appdata Backup's settings. The terminal command adds your Unraid version, the PCI
 IDs from `lspci -n` (numbers like `0300:8086:4680`, which say what kind of GPU and network card you have), the state of
-your disks (`/var/local/emhttp/disks.ini`) and the order containers start in (`/var/lib/docker/unraid-autostart`).
+your disks (`/var/local/emhttp/disks.ini`), the order containers start in (`/var/lib/docker/unraid-autostart`), the
+names of your installed containers (`docker ps -a`) and of the folders in `/mnt/user/appdata`, and how much space
+Docker's unused images and volumes take (`docker system df`).
 
 **Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
 is kept: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a
 GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; the few
 Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space and error count; each
-plugin's file name, the address it was installed from and the Unraid versions it's made for; and Appdata Backup's
-schedule, destination and skipped containers. Everything else (passwords, API keys, VPN details, email settings, IP
+plugin's file name, the address it was installed from and the Unraid versions it's made for; Appdata Backup's
+schedule, destination and skipped containers; the names of your installed containers and appdata folders; and the size
+of Docker's unused images and volumes. Everything else (passwords, API keys, VPN details, email settings, IP
 addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the
 files are read and never saved. Folder and container names are kept because the checks need them, so if one is named after a person, that name
 is kept too.
@@ -170,8 +175,16 @@ choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of 
 `plugins` for the Docker, share, time, alert, backup and plugin checks. Only those files are sent, from your browser to
 Setuparr. The disk, start order, GPU, network card and Unraid version checks need the terminal command.
 
-Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Send
-the files again whenever you change a container.
+Unraid keeps templates for containers you've removed. The terminal command leaves those out by itself; if you choose the
+files instead, untick them on the Unraid page or they're checked too. Send the files again whenever you change a
+container.
+
+**Check every night, with Unraid notifications.** On the **Unraid** page, press **Show the script** and add it with the
+User Scripts plugin (Settings > User Scripts > Add New Script), scheduled daily. Every night it sends the same files to
+Setuparr on your own network, waits for the checks, and calls Unraid's own `notify` script when there's a new problem or
+warning, so it appears like Unraid's other notifications (and by email or Discord if you've set those up in Unraid).
+It only talks to Setuparr; nothing goes to the internet. The script holds a key that keeps working; **Make a new key**
+on the same page stops an old copy working.
 
 If you used Setuparr 0.2.0's instructions, an `unraid-config.tar.gz` may still be in Setuparr's config folder. The
 Unraid page offers to read it and delete it, or just delete it.
