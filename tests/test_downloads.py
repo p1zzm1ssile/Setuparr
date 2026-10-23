@@ -141,3 +141,40 @@ def test_library_settings_against_the_trash_guides():
 def test_propers_and_repacks_only_matter_with_the_custom_format():
     d = {"media": {"downloadPropersAndRepacks": "preferAndUpgrade"}, "formats": [{"name": "x265 (HD)"}]}
     assert library.check("sonarr", "Sonarr", d) == []
+
+
+def test_unfinished_downloads_on_another_share():
+    snap = snapshot(container("qbittorrent", "lscr.io/linuxserver/qbittorrent", ("/mnt/user", "/mnt/user")))
+    s = qbit(save_path="/mnt/user/data/torrents", incomplete_path="/mnt/user/downloads/incomplete", categories={})
+    f = titles(downloads.check_client("qbittorrent", "qBittorrent", s, snap))
+    assert "on a different share" in f["qBittorrent copies every finished download to another folder mapping"]["detail"]
+    s["incomplete_path"] = "/mnt/user/data/incomplete"
+    assert downloads.check_client("qbittorrent", "qBittorrent", s, snap) == []
+
+
+def test_seeding_limits_that_remove_torrents_early():
+    early = qbit(seeding={"ratio": 0.5, "minutes": None, "action": 3})
+    f = titles(downloads.check_client("qbittorrent", "qBittorrent", early))
+    assert f["qBittorrent removes torrents soon after they finish"]["items"] == ["Share ratio limit: 0.5"]
+    # Stopping torrents, or limits long enough to import and seed, are fine
+    assert downloads.check_client("qbittorrent", "qBittorrent", qbit(seeding={"ratio": 0.5, "minutes": None, "action": 0})) == []
+    assert downloads.check_client("qbittorrent", "qBittorrent", qbit(seeding={"ratio": 2, "minutes": 10080, "action": 1})) == []
+
+
+def test_archives_waiting_in_the_queue():
+    queue = {"records": [
+        {"title": "Show.S01E01.1080p-GRP", "statusMessages": [
+            {"title": "Show.S01E01.1080p-GRP", "messages": ["Found archive file, might need to be extracted"]}]},
+        {"title": "Show.S01E02.1080p-GRP", "statusMessages": []}]}
+    f = downloads.check_archives("Sonarr", queue)
+    assert titles(f)["Sonarr can't import 1 download packed as RAR archives"]["items"] == ["Show.S01E01.1080p-GRP"]
+    assert "Install Unpackerr" in f[0]["steps"][0]
+    snap = snapshot(container("unpackerr", "golift/unpackerr"))
+    assert "hasn't extracted them" in downloads.check_archives("Sonarr", queue, snap)[0]["detail"]
+    assert downloads.check_archives("Sonarr", {"records": []}) == [] and downloads.check_archives("Sonarr", None) == []
+
+
+def test_lidarr_download_clients():
+    lidarr = arr([entry(1, "qBittorrent", key="musicCategory", category="")])
+    f = titles(downloads.check_arr("lidarr", "Lidarr", lidarr))
+    assert "e.g. lidarr." in f["1 download client in Lidarr has no category"]["steps"][0]

@@ -41,7 +41,7 @@ class QBittorrent(Fake):
             return self.answer(200, b"v5.0.0")
         if self.path == "/api/v2/app/preferences":
             return self.answer(200, {"save_path": "/data/torrents", "temp_path_enabled": True, "temp_path": "/data/torrents/incomplete",
-                                     "auto_tmm_enabled": False, "preallocate_all": True,
+                                     "auto_tmm_enabled": False, "preallocate_all": True, "max_ratio_enabled": True, "max_ratio": 1.5, "max_seeding_time_enabled": False, "max_seeding_time": 60, "max_ratio_act": 0,
                                      "bypass_auth_subnet_whitelist_enabled": True,
                                      "bypass_auth_subnet_whitelist": "192.168.1.0/24\n10.0.0.0/8"})
         if self.path == "/api/v2/torrents/categories":
@@ -128,7 +128,8 @@ def test_qbittorrent(servers):
     assert c.version() == "v5.0.0"
     assert c.settings() == {"save_path": "/data/torrents", "incomplete_path": "/data/torrents/incomplete",
                             "categories": {"radarr": "/data/torrents/movies", "tv-sonarr": ""}, "automatic": False,
-                            "labels": None, "preallocate": True, "no_login_networks": ["192.168.1.0/24", "10.0.0.0/8"]}
+                            "labels": None, "preallocate": True, "no_login_networks": ["192.168.1.0/24", "10.0.0.0/8"],
+                            "seeding": {"ratio": 1.5, "minutes": None, "action": 0}}
 
 
 def test_qbittorrent_5_2_signs_in(servers):

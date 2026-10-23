@@ -195,7 +195,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # Sent straight from Unraid's terminal with curl, which can't log in: a one-time link instead
         if path == "/api/unraid/push":
-            return self.unraid_push(parse_qs(url.query).get("token", [""])[0])
+            query = parse_qs(url.query)
+            return self.unraid_push(query.get("token", [""])[0], query.get("key", [""])[0])
 
         # Only accept writes from our own pages: a form on another site
         # can't set this header, and the session cookie is SameSite=Strict too
@@ -292,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True, "summary": summary})
             if path == "/api/unraid/token":
                 return self.send(200, {"token": runner.new_push_token(), "minutes": runner.PUSH_SECONDS // 60})
+            if path == "/api/unraid/schedule":
+                return self.send(200, {"key": runner.schedule_key(new=bool(data.get("new")))})
             if path == "/api/unraid/delete-leftover":
                 runner.delete_leftover()
                 return self.send(200, {"ok": True})
@@ -312,22 +315,35 @@ class Handler(BaseHTTPRequestHandler):
             self.send(500, {"error": str(e)})
 
 
-    def unraid_push(self, token):
+    def unraid_push(self, token, key=""):
+        """token: a one-time link from the Unraid page. key: the scheduled scan script's key, which also runs the
+        checks and answers with three lines for Unraid's notify script (importance, subject, description), or
+        "none" when nothing new was found."""
         def text(code, message):
             self.send(code, message + "\n", "text/plain; charset=utf-8")
 
-        if not runner.use_push_token(token):
+        scheduled = bool(key) and runner.use_schedule_key(key)
+        if not scheduled and not runner.use_push_token(token):
             logger.warning(f"Unraid files sent with a wrong or used link from {self.ip}")
+            if key:
+                return text(403, "Setuparr: the scheduled scan key isn't right. Copy the script from the Unraid page again.")
             return text(403, "Setuparr: that link has been used or has run out. Get a new one on the Unraid page.")
         length = int(self.headers.get("Content-Length") or 0)
         if not 0 < length <= 50_000_000:
             return text(400, "Setuparr: nothing was sent, or it's more than 50 MB.")
         try:
             # Read in memory and never written to disk
+            host = {k: self.headers.get(f"X-{k.capitalize()}") for k in ("containers", "appdata", "docker")}
             summary = runner.import_files([("unraid.tar.gz", self.rfile.read(length))],
-                                          self.headers.get("X-Hardware"), self.headers.get("X-Unraid-Version"))
+                                          self.headers.get("X-Hardware"), self.headers.get("X-Unraid-Version"), host)
         except (UploadError, ValueError) as e:
             return text(400, f"Setuparr: {e}")
+        if scheduled:
+            try:
+                report = runner.scan_and_report()
+            except ValueError as e:
+                return text(503, f"Setuparr: {e}")
+            return text(200, "\n".join(report) if report else "none")
         runner.run_in_background()
         return text(200, f"Setuparr: read {len(summary['containers'])} containers and {len(summary['shares'])} shares. "
                          "Nothing was saved on the way. Go back to Setuparr to see the results.")
@@ -347,6 +363,8 @@ def dashboard():
         "planned": app_info.PLANNED,
         "results": runner.results(),
         "fixes": runner.fixes()[:20],
+        "score": runner.score(runner.results()["findings"]),
+        "scores": runner.scores()[-60:],
         "connections": [
             {"key": key, "label": label, "enabled": bool(getattr(config, f"{key}_enabled"))}
             for key, label, *_ in app_info.SERVICES

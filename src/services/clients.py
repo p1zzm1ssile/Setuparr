@@ -89,6 +89,11 @@ class QBittorrent(Client):
             "automatic": bool(prefs.get("auto_tmm_enabled")),
             "labels": None,
             "preallocate": bool(prefs.get("preallocate_all")),
+            # What happens when a torrent reaches its share ratio or seeding time limit: 0 stop, 1 remove,
+            # 2 super seeding, 3 remove with its files
+            "seeding": {"ratio": prefs.get("max_ratio") if prefs.get("max_ratio_enabled") else None,
+                        "minutes": prefs.get("max_seeding_time") if prefs.get("max_seeding_time_enabled") else None,
+                        "action": prefs.get("max_ratio_act")},
             "no_login_networks": ([n.strip() for n in whitelist.replace(",", "\n").splitlines() if n.strip()]
                                   if prefs.get("bypass_auth_subnet_whitelist_enabled") else []),
         }
@@ -132,6 +137,7 @@ class Transmission(Client):
             "automatic": None,
             "labels": None,
             "preallocate": None,
+            "seeding": None,
             "no_login_networks": [],
         }
 
@@ -195,6 +201,7 @@ class Deluge(Client):
             "automatic": None,
             "labels": labels,
             "preallocate": None,
+            "seeding": None,
             "no_login_networks": [],
         }
 

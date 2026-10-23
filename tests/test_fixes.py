@@ -84,3 +84,16 @@ def test_only_stored_findings_can_be_fixed(sonarr):
     store([])
     with pytest.raises(ValueError, match="isn't available"):
         runner.apply_fix("del1")
+
+
+def test_health_score_is_recorded_after_each_run():
+    from checks import finding
+    found = [finding("a", "unraid", "problem", "Unraid", "A", ""), finding("b", "unraid", "warning", "Unraid", "B", ""),
+             finding("c", "unraid", "tip", "Unraid", "C", "")]
+    assert runner.score(found) == {"score": 85, "problem": 1, "warning": 1, "tip": 1}
+    found[0]["dismissed"] = True
+    assert runner.score(found)["score"] == 95
+    assert runner.score([finding(str(i), "unraid", "problem", "Unraid", "x", "") for i in range(20)])["score"] == 0
+    before = len(runner.scores())
+    runner.run()
+    assert len(runner.scores()) == before + 1 and runner.scores()[-1]["score"] <= 100

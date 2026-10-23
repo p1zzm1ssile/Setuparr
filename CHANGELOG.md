@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.0
+
+- **Cleanup:** appdata folders no installed container uses, templates Unraid keeps for containers you've removed, and
+  more than 1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything: each finding lists what's
+  left over and how to move it out safely.
+- **Templates of removed containers are left out of the checks by themselves** when you use the terminal command, so
+  you no longer need to untick them.
+- **Check every night, with Unraid notifications:** the Unraid page has a script for the User Scripts plugin. It sends
+  the files to Setuparr on your own network every night, runs the checks, and shows any new problem or warning as an
+  Unraid notification. Nothing goes to the internet. It uses a key that keeps working, unlike the one-time command;
+  **Make a new key** stops an old copy of the script working.
+- **Download clients:** qBittorrent seeding limits that remove torrents before Sonarr or Radarr import them (and count
+  as hit-and-run on private trackers), unfinished downloads on a different share from finished ones, and downloads
+  stuck in Sonarr or Radarr's queue as RAR archives with no Unpackerr to extract them.
+- **Health score:** the Dashboard shows a score out of 100 (minus 10 for each problem, 4 for each warning and 1 for
+  each tip; dismissed ones don't count), how it's changed over the last week, and a line of past scores. Each check
+  run is saved in `scores.json`, up to the last 365.
+- **Lidarr:** connect it under Settings. It gets the same library, download client, tag, health, security, profile and
+  backup checks as Sonarr and Radarr, except the TRaSH custom format ones. Readarr isn't included because it has been
+  retired by its developers.
+- **Seerr:** requests sent with a quality profile or root folder that Sonarr or Radarr no longer has, no default
+  server for TV, films or 4K, servers it can't reach, and films added with Minimum Availability set to Announced.
+  Shown under **Seerr** on the Dashboard.
+- **From the idea list:** Unraid on DHCP, Telnet on, disks that never spin down or run hot, the array not starting by
+  itself, no UPS, Plex, Jellyfin or Emby transcoding to RAM with no memory limit, Sonarr and Radarr with no recycle
+  bin or unused quality profiles, and Radarr films grabbed as soon as they're announced. The terminal command now
+  also sends `disk.cfg` and the UPS settings (only the settings above and the disks' temperature are kept).
+- The terminal command now also sends the names of your installed containers and of the folders in appdata, and how
+  much space Docker's unused images and volumes take. **Get the command again** to get the cleanup checks.
+
 ## 0.6.0
 
 - **More of Unraid's own settings are checked:**

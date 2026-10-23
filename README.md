@@ -60,8 +60,12 @@ From the plugins and PCI IDs the terminal command sends:
   doesn't have.
 - A **Realtek RTL8125, RTL8126 or RTL8168** network card on Unraid's built-in driver, and a **Coral** accelerator with
   no driver.
+- **Server settings:** Unraid on DHCP, Telnet turned on, disks that never spin down or are running hot, the array
+  not starting by itself, no UPS set up, and Plex, Jellyfin or Emby transcoding to RAM with no memory limit.
+- **Cleanup:** appdata folders no installed container uses, templates for containers you've removed, and more than
+  1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything itself.
 
-### Download clients (Sonarr, Radarr, qBittorrent, Transmission, Deluge)
+### Download clients (Sonarr, Radarr, Lidarr, qBittorrent, Transmission, Deluge)
 
 From Sonarr and Radarr's download client settings:
 
@@ -69,28 +73,33 @@ From Sonarr and Radarr's download client settings:
 - Download clients reached at `localhost`, which inside a container is the container itself.
 - Download clients with no category, and Sonarr and Radarr sharing one category in the same client.
 - Deluge used with a category while its Label plugin is off.
+- Downloads stuck in the queue because they're RAR archives, with no Unpackerr to extract them (or Unpackerr not
+  connected).
 
 When you connect qBittorrent, Transmission or Deluge under **Settings** (Setuparr only reads their settings):
 
 - Downloads saved to a folder that isn't in the client's folder mappings, so they stay inside the container (needs
   your Unraid settings).
-- Unfinished downloads kept in a different folder mapping, so every finished download is copied.
+- Unfinished downloads kept in a different folder mapping or share, so every finished download is copied.
 - qBittorrent: categories that don't choose the folder (Manual torrent management), pre-allocation on a cached share,
-  and networks let in without a password.
+  networks let in without a password, and seeding limits that remove torrents before they're imported or seeded.
 
-### Library (Sonarr, Radarr)
+### Library (Sonarr, Radarr, Lidarr)
 
 - Root folders Sonarr or Radarr can't reach.
 - Use Hardlinks instead of Copy turned off.
 - Propers and Repacks not set to Do Not Prefer when you use the TRaSH Repack/Proper custom format.
 - Rename Episodes or Rename Movies turned off.
 
-### Health, security, profiles and backups (Sonarr, Radarr)
+### Health, security, profiles and backups (Sonarr, Radarr, Lidarr)
+
+Lidarr gets every check here except the custom format ones, which follow the TRaSH guides and they don't cover Lidarr.
 
 - Anything on Sonarr or Radarr's own **System > Status** health list, like failing indexers or an unreachable
   download client.
 - **No login**, or no password asked on your network, which a reverse proxy on the same server opens to everyone.
 - **Set Permissions** turned on, which fights Unraid's PUID, PGID and UMASK.
+- **No recycle bin**, quality profiles nothing uses, and Radarr films set to be grabbed as soon as they're announced.
 - **Quality profiles:** no custom formats at all, a profile where every custom format scores 0, a Minimum Custom
   Format Score no release can reach, Upgrade Until set to the lowest quality, and upgrades turned off when custom
   formats would pick better releases.
@@ -108,7 +117,13 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
   settings).
 - Backups set to Manually.
 
-### Tags (Sonarr, Radarr, Prowlarr, Seerr)
+### Seerr
+
+- Requests sent with a quality profile or root folder Sonarr or Radarr no longer has, so they're turned down.
+- No default server for TV, films or 4K, servers Seerr can't reach, and films added to be grabbed as soon as they're
+  announced.
+
+### Tags (Sonarr, Radarr, Lidarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
 - Indexers, download clients and profiles limited to a tag no series or film has, so they're never used.
@@ -139,22 +154,31 @@ with what each does, when to use it and an example.
 - Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
 - More **Fix it** buttons, including for download client settings, and anime checks for Radarr.
 
+### Health score
+
+The Dashboard shows a score out of 100: 10 off for each problem, 4 for each warning and 1 for each tip, not counting
+ones you've dismissed. It's saved after every check, so you can see whether your setup is getting better or worse over
+the last week.
+
 ## Giving Setuparr your Unraid settings
 
 Setuparr never looks around your server and doesn't need the Docker socket. It reads only the Unraid settings files
 you send it: the Docker templates, the share settings and Compose Manager's compose files.
 
-It also reads Unraid's `docker.cfg`, `share.cfg`, `network.cfg`, `ident.cfg` and `plugins/dynamix/dynamix.cfg`, the
+It also reads Unraid's `docker.cfg`, `share.cfg`, `network.cfg`, `ident.cfg`, `disk.cfg`, `plugins/dynamix/dynamix.cfg` and the UPS settings, the
 installed plugins' `.plg` files and Appdata Backup's settings. The terminal command adds your Unraid version, the PCI
 IDs from `lspci -n` (numbers like `0300:8086:4680`, which say what kind of GPU and network card you have), the state of
-your disks (`/var/local/emhttp/disks.ini`) and the order containers start in (`/var/lib/docker/unraid-autostart`).
+your disks (`/var/local/emhttp/disks.ini`), the order containers start in (`/var/lib/docker/unraid-autostart`), the
+names of your installed containers (`docker ps -a`) and of the folders in `/mnt/user/appdata`, and how much space
+Docker's unused images and volumes take (`docker system df`).
 
 **Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
 is kept: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a
 GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; the few
-Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space and error count; each
-plugin's file name, the address it was installed from and the Unraid versions it's made for; and Appdata Backup's
-schedule, destination and skipped containers. Everything else (passwords, API keys, VPN details, email settings, IP
+Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space, error count and temperature; each
+plugin's file name, the address it was installed from and the Unraid versions it's made for; Appdata Backup's
+schedule, destination and skipped containers; the names of your installed containers and appdata folders; and the size
+of Docker's unused images and volumes. Everything else (passwords, API keys, VPN details, email settings, IP
 addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the
 files are read and never saved. Folder and container names are kept because the checks need them, so if one is named after a person, that name
 is kept too.
@@ -170,8 +194,16 @@ choose the `plugins\dockerMan\templates-user` and `shares` folders, or a zip of 
 `plugins` for the Docker, share, time, alert, backup and plugin checks. Only those files are sent, from your browser to
 Setuparr. The disk, start order, GPU, network card and Unraid version checks need the terminal command.
 
-Unraid keeps templates for containers you've removed, so untick those on the Unraid page or they're checked too. Send
-the files again whenever you change a container.
+Unraid keeps templates for containers you've removed. The terminal command leaves those out by itself; if you choose the
+files instead, untick them on the Unraid page or they're checked too. Send the files again whenever you change a
+container.
+
+**Check every night, with Unraid notifications.** On the **Unraid** page, press **Show the script** and add it with the
+User Scripts plugin (Settings > User Scripts > Add New Script), scheduled daily. Every night it sends the same files to
+Setuparr on your own network, waits for the checks, and calls Unraid's own `notify` script when there's a new problem or
+warning, so it appears like Unraid's other notifications (and by email or Discord if you've set those up in Unraid).
+It only talks to Setuparr; nothing goes to the internet. The script holds a key that keeps working; **Make a new key**
+on the same page stops an old copy working.
 
 If you used Setuparr 0.2.0's instructions, an `unraid-config.tar.gz` may still be in Setuparr's config folder. The
 Unraid page offers to read it and delete it, or just delete it.

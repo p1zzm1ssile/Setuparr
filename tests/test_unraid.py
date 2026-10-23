@@ -551,3 +551,70 @@ def test_restart_policies_and_privileged_containers():
                           "qbittorrent runs as Privileged", "tool runs as Privileged"]
     assert by["qbittorrent runs as Privileged"]["severity"] == "warning" and by["tool runs as Privileged"]["severity"] == "tip"
     assert by["tool runs as Privileged"]["link"] == "#/guides"
+
+
+def run_host(files, **host):
+    snap = unraid.build_snapshot(unraid.read_upload(files), host=host)
+    return snap, unraid.check(json.loads(json.dumps(snap)))
+
+
+def test_leftovers_from_removed_containers():
+    removed = template("overseerr", "lscr.io/linuxserver/overseerr", [("/mnt/user/appdata/overseerr", "/config")])
+    snap, findings = run_host(GOOD + [removed], containers="qbittorrent sonarr radarr plex ",
+                              appdata="sonarr/radarr/overseerr/Plex/old-tautulli/",
+                              docker="Images|2.5GB (40%);Containers|0B (0%);Local Volumes|120MB (100%);Build Cache|0B;")
+    # The removed container's template isn't checked, and its folder counts as unused
+    assert [c["name"] for c in snap["containers"]] == ["qbittorrent", "radarr", "sonarr"]
+    assert snap["unused_templates"] == ["overseerr"]
+    assert sorted(titles(findings)) == ["2 appdata folders don't belong to any container",
+                                        "Docker is keeping 2.6 GB it doesn't use",
+                                        "Unraid still has templates for 1 container you've removed"]
+    by_title = {f["title"]: f for f in findings}
+    assert by_title["2 appdata folders don't belong to any container"]["items"] == ["old-tautulli", "overseerr"]
+    assert unraid.summary(snap)["unused_templates"] == 1
+
+
+def test_cleanup_needs_what_the_terminal_command_sends():
+    # An upload without them, a container that maps all of appdata, and a little unused space report nothing
+    assert run_host(GOOD)[1] == []
+    whole = template("krusader", "binhex/arch-krusader", [("/mnt/user/appdata", "/appdata")])
+    assert run_host(GOOD + [whole], appdata="sonarr/radarr/old/")[1] == []
+    assert run_host(GOOD, docker="Images|300MB (10%);Local Volumes|0B (0%);")[1] == []
+    # docker ps failing sends nothing, so every template is still checked
+    snap, _ = run_host(GOOD, containers="")
+    assert len(snap["containers"]) == 3 and "unused_templates" not in snap
+
+
+def test_docker_sizes():
+    assert unraid.parse_size("1.5GB (30%)") == 1_500_000_000
+    assert unraid.parse_size("512kB") == 512_000
+    assert unraid.parse_size("0B") == 0 and unraid.parse_size("") == 0
+
+
+def test_server_settings_from_the_idea_list():
+    files = GOOD + HAVE_PLUGINS
+    good = [cfg("network.cfg", USE_DHCP="no"), cfg("ident.cfg", USE_TELNET="no"),
+            cfg("disk.cfg", spindownDelay="1", startArray="yes"),
+            cfg("plugins/dynamix.apcupsd/dynamix.apcupsd.cfg", SERVICE="enable", NISIP="192.168.1.5")]
+    snap, findings = run_with(files + good)
+    assert findings == [] and "192.168.1.5" not in json.dumps(snap)
+    bad = [cfg("network.cfg", USE_DHCP="yes"), cfg("ident.cfg", USE_TELNET="yes"),
+           cfg("disk.cfg", spindownDelay="0", startArray="no")]
+    assert titles(run_with(files + bad)[1]) == ["Unraid gets its address from your router", "Telnet is turned on",
+                                                "Disks never spin down", "The array doesn't start by itself after a restart",
+                                                "Unraid doesn't know about a UPS"]
+    # The NUT plugin counts as a UPS
+    nut = plugin("nut-dw.plg", "https://example.com/nut.plg")
+    assert "Unraid doesn't know about a UPS" not in titles(run_with(files + [nut, cfg("disk.cfg", spindownDelay="1")])[1])
+
+
+def test_hot_disks_and_transcoding_to_ram():
+    disks = ("disks.ini", b'["parity"]\nname="parity"\ntype="Parity"\nstatus="DISK_OK"\ntemp="52"\n'
+                          b'["disk1"]\nname="disk1"\ntype="Data"\nstatus="DISK_OK"\ntemp="*"\n'
+                          b'["cache"]\nname="cache"\ntype="Cache"\nstatus="DISK_OK"\ntemp="60"\n')
+    _, findings = run_with(GOOD + HAVE_PLUGINS + [disks])
+    hot = {f["title"]: f for f in findings}["1 disk is running hot"]
+    assert hot["items"] == ["Parity: 52°C"]
+    plex = template("plex", "lscr.io/linuxserver/plex", [("/tmp", "/transcode"), ("/mnt/user/data/media", "/data/media")])
+    _, findings = run_with(GOOD + HAVE_PLUGINS + [plex])
+    assert "Transcodes in RAM have no size limit" in titles(findings)

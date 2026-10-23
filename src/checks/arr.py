@@ -1,4 +1,4 @@
-"""Sonarr and Radarr's own health, security, quality profiles and backups."""
+"""Sonarr, Radarr and Lidarr's own health, security, quality profiles and backups."""
 
 from checks import PROBLEM, TIP, WARNING, finding, plural, unraid
 
@@ -8,20 +8,27 @@ TRASH = {
                "formats": "https://trash-guides.info/Sonarr/sonarr-collection-of-custom-formats/"},
     "radarr": {"profiles": "https://trash-guides.info/Radarr/radarr-setup-quality-profiles/",
                "formats": "https://trash-guides.info/Radarr/Radarr-collection-of-custom-formats/"},
+    # TRaSH has no Lidarr guide
+    "lidarr": {"profiles": "https://wiki.servarr.com/lidarr/settings#quality-profiles",
+               "formats": "https://wiki.servarr.com/lidarr/settings#custom-formats"},
 }
 TRASH_PERMISSIONS = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Unraid/"
 SERVARR_AUTH = "https://wiki.servarr.com/sonarr/settings#security"
+SERVARR_MEDIA = {"sonarr": "https://wiki.servarr.com/sonarr/settings#file-management",
+                 "radarr": "https://wiki.servarr.com/radarr/settings#file-management",
+                 "lidarr": "https://wiki.servarr.com/lidarr/settings#file-management"}
 HEALTH_SEVERITY = {"error": PROBLEM, "warning": WARNING, "notice": TIP}
 # Health checks Setuparr already explains in more detail
 COVERED_HEALTH = {"RootFolderCheck"}
-ITEMS = {"sonarr": ("series", "series"), "radarr": ("film", "films")}
+ITEMS = {"sonarr": ("series", "series"), "radarr": ("film", "films"), "lidarr": ("artist", "artists")}
 
 
 def check(service, label, d, snapshot=None):
     """d holds what fetch_arr reads: profiles, formats, items, and health, host and media when they could be read."""
     return (check_health(label, d.get("health")) + check_security(label, d.get("host"))
-            + check_permissions(label, d.get("media")) + check_profiles(service, label, d)
-            + check_backups(label, d.get("host"), snapshot))
+            + check_permissions(label, d.get("media")) + check_recycle_bin(label, d.get("media"))
+            + check_profiles(service, label, d) + check_unused_profiles(service, label, d)
+            + check_availability(service, d.get("items")) + check_backups(label, d.get("host"), snapshot))
 
 
 def check_health(label, health):
@@ -81,6 +88,52 @@ def check_permissions(label, media):
         link=TRASH_PERMISSIONS)]
 
 
+def check_recycle_bin(label, media):
+    if not media or "recycleBin" not in media or media.get("recycleBin"):
+        return []
+    return [finding(
+        "recycle-bin", AREA, TIP, label, f"{label} deletes files for good",
+        f"No recycle bin is set, so when {label} upgrades a file or you delete something by mistake, the old file "
+        "is gone straight away.",
+        steps=[f"Make a folder such as /data/media/.recycle, then in {label} go to Settings > Media Management (Show "
+               "Advanced) > File Management and set Recycling Bin to it, with Recycling Bin Cleanup at 7 days."],
+        link=SERVARR_MEDIA[label.lower()])]
+
+
+def check_unused_profiles(service, label, d):
+    if not d.get("items"):
+        return []
+    used = {i.get("qualityProfileId") for i in d["items"]}
+    unused = sorted(p.get("name") or "?" for p in d.get("profiles") or [] if p.get("id") not in used)
+    if not unused:
+        return []
+    return [finding(
+        "unused-profiles", AREA, TIP, label,
+        f"{plural(len(unused), 'quality profile')} in {label} {'isn' if len(unused) == 1 else 'aren'}'t used",
+        f"No {ITEMS[service][1]} use {'it' if len(unused) == 1 else 'them'}. Spare profiles make it easy to pick the "
+        "wrong one when you add something, and Recyclarr or Notifiarr keep updating them for nothing.",
+        steps=[f"In {label}, go to Settings > Profiles and delete the ones you don't need."],
+        items=unused, link=TRASH[service]["profiles"])]
+
+
+def check_availability(service, items):
+    """Radarr films still waiting to download that can be grabbed as soon as they're announced, which means cams."""
+    if service != "radarr":
+        return []
+    early = sorted(i.get("title") or "?" for i in items or []
+                   if i.get("minimumAvailability") == "announced" and i.get("monitored") and not i.get("hasFile"))
+    if not early:
+        return []
+    return [finding(
+        "announced", AREA, TIP, "Radarr", f"{plural(len(early), 'film')} can be grabbed as soon as {'it is' if len(early) == 1 else 'they are'} announced",
+        "Minimum Availability is Announced, so Radarr searches before the film is out, when the only releases are "
+        "cams, telesyncs and fakes. Some get grabbed if your profile allows them.",
+        steps=["In Radarr, select the films (Movies > Select Movies), choose Edit and set Minimum Availability to "
+               "Released.",
+               "When you add a film, choose Released under Minimum Availability. Radarr remembers it for next time."],
+        items=early, link=TRASH["radarr"]["profiles"])]
+
+
 def allowed_ids(profile):
     """The allowed qualities and groups of a profile, lowest first, by the id its cutoff uses."""
     ids = []
@@ -101,7 +154,9 @@ def check_profiles(service, label, d):
     findings = []
 
     # Sonarr v3 has no custom formats (None); v4 and Radarr with none imported return []
-    if formats == [] and d.get("items"):
+    # The custom format checks follow the TRaSH guides, which don't cover Lidarr
+    trash = service != "lidarr"
+    if trash and formats == [] and d.get("items"):
         findings.append(finding(
             "no-formats", AREA, TIP, label, f"{label} has no custom formats",
             f"Custom formats are how the TRaSH guide makes {label} prefer good releases (the right sources, HDR, "
@@ -127,7 +182,7 @@ def check_profiles(service, label, d):
                 steps=[f"In {label}, go to Settings > Profiles > {name} and lower Minimum Custom Format Score (the "
                        "TRaSH profiles mostly use 0), or score the custom formats you want."],
                 items=items, link=TRASH[service]["profiles"]))
-        if formats and scores and not any(scores):
+        if trash and formats and scores and not any(scores):
             findings.append(finding(
                 f"zero-scores|{p.get('id')}", AREA, WARNING, label, f"The {name} profile ignores your custom formats",
                 f"Every custom format scores 0 in this profile, so {label} picks releases for its {things} as if you "

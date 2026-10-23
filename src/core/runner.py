@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import SEVERITY_ORDER, anime, arr, bazarr, downloads, library, tags, unraid
+from checks import PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, library, plural, seerr, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -24,6 +24,11 @@ RESULTS_FILE = os.path.join(config.config_dir, "results.json")
 SNAPSHOT_FILE = os.path.join(config.config_dir, "unraid.json")
 FIXES_FILE = os.path.join(config.config_dir, "fixes.json")
 MODERATION_FILE = os.path.join(config.config_dir, "moderation.json")
+SCHEDULE_FILE = os.path.join(config.config_dir, "schedule.json")
+SCORES_FILE = os.path.join(config.config_dir, "scores.json")
+# A health score out of 100: each finding that isn't dismissed takes off this much
+SCORE_COST = {PROBLEM: 10, WARNING: 4, TIP: 1}
+MAX_SCORES = 365
 MODERATION_SECONDS = 24 * 3600
 # Dropped into the config folder from Unraid's terminal, imported, then deleted
 IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip", "unraid-config.tar")
@@ -65,10 +70,11 @@ def snapshot():
     return _read(SNAPSHOT_FILE, None)
 
 
-def import_files(files, hardware=None, version=None):
-    """[(name, bytes)] from an upload or the config folder, and what the terminal command adds: lspci -n's PCI IDs
-    and the Unraid version. Returns a summary."""
-    snap = unraid.build_snapshot(unraid.read_upload(files), hardware, version)
+def import_files(files, hardware=None, version=None, host=None):
+    """[(name, bytes)] from an upload or the config folder, and what the terminal command adds: lspci -n's PCI IDs,
+    the Unraid version, and the installed containers, appdata folders and Docker's unused space (host). Returns a
+    summary."""
+    snap = unraid.build_snapshot(unraid.read_upload(files), hardware, version, host)
     old = snapshot() or {}
     snap["ignored"] = [n for n in old.get("ignored", []) if any(c["name"] == n for c in snap["containers"])]
     snap["imported_at"] = time.time()
@@ -131,6 +137,54 @@ def use_push_token(token):
     return False
 
 
+# A key for a script on Unraid that sends the files on a schedule and shows new problems as an Unraid notification.
+# Unlike the one-time links it keeps working until a new one is made.
+SCAN_WAIT_SECONDS = 600
+
+
+def schedule_key(new=False):
+    """The scheduled scan key, made the first time it's asked for."""
+    data = _read(SCHEDULE_FILE, {})
+    if new or not data.get("key"):
+        data = {"key": secrets.token_urlsafe(24), "notified": []}
+        _write(SCHEDULE_FILE, data)
+        logger.log("ACTION", "Made a new key for scheduled scans")
+    return data["key"]
+
+
+def use_schedule_key(key):
+    known = _read(SCHEDULE_FILE, {}).get("key")
+    return bool(known) and hmac.compare_digest(known, key or "")
+
+
+def scan_and_report():
+    """Run the checks now and say what's new since the last scheduled scan, as (importance, subject, description)
+    for Unraid's notify script, or None if nothing is. Only problems and warnings count, and dismissed ones don't."""
+    deadline = time.time() + SCAN_WAIT_SECONDS
+    # If a run is already going, it may have started before the new files arrived, so wait and run again
+    while not run():
+        if time.time() > deadline:
+            raise ValueError("the checks were busy for too long")
+        time.sleep(1)
+    current = [f for f in results()["findings"] if f["severity"] in (PROBLEM, WARNING) and not f["dismissed"]]
+    data = _read(SCHEDULE_FILE, {})
+    notified = set(data.get("notified", []))
+    new = [f for f in current if f["id"] not in notified]
+    # Remember what's there now, so a fixed problem that comes back is reported again
+    data["notified"] = [f["id"] for f in current]
+    _write(SCHEDULE_FILE, data)
+    if not new:
+        return None
+    problems = [f for f in new if f["severity"] == PROBLEM]
+    counts = [plural(len(problems), "new problem")] if problems else []
+    if len(new) > len(problems):
+        counts.append(plural(len(new) - len(problems), "new warning"))
+    description = "; ".join(f"{f['app']}: {f['title']}" for f in new[:5])
+    if len(new) > 5:
+        description += f"; and {len(new) - 5} more"
+    return ("alert" if problems else "warning", f"{app_info.NAME} found {' and '.join(counts)}", description)
+
+
 def import_from_config_folder():
     """Import an archive left in the config folder, then delete it, since it can hold passwords."""
     for name in IMPORT_NAMES:
@@ -162,19 +216,24 @@ def forget_snapshot():
 # Fetching from the apps
 
 
+ITEM_PATHS = {"sonarr": "/series", "radarr": "/movie", "lidarr": "/artist"}
+ARRS = (("sonarr", "Sonarr"), ("radarr", "Radarr"), ("lidarr", "Lidarr"))
+
+
 def fetch_arr(arr, kind):
     data = {
         "tags": arr.call("GET", "/tag/detail"),
         "indexers": arr.call("GET", "/indexer"),
         "clients": arr.call("GET", "/downloadclient"),
-        "items": arr.call("GET", "/series" if kind == "sonarr" else "/movie"),
+        "items": arr.call("GET", ITEM_PATHS[kind]),
         "roots": arr.call("GET", "/rootfolder"),
         "profiles": arr.call("GET", "/qualityprofile"),
         "naming": arr.call("GET", "/config/naming"),
     }
     # Only some checks need these, and Sonarr v3 has no custom formats
     for key, path in (("media", "/config/mediamanagement"), ("handling", "/config/downloadclient"),
-                      ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host")):
+                      ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host"),
+                      ("queue", "/queue?pageSize=250")):
         try:
             data[key] = arr.call("GET", path)
         except ServiceError:
@@ -196,10 +255,12 @@ def fetch_seerr(s):
     for kind in ("sonarr", "radarr"):
         for settings in s.call("GET", f"/settings/{kind}") or []:
             try:
-                live = (s.call("GET", f"/service/{kind}/{settings['id']}") or {}).get("tags")
+                found = s.call("GET", f"/service/{kind}/{settings['id']}") or {}
+                live = {k: found.get(k) for k in ("profiles", "rootFolders", "tags")}
             except ServiceError:
-                live = None  # The server may be down; its tags just aren't checked
-            servers.append({"kind": kind, "settings": settings, "live_tags": live})
+                live = None  # The server may be down
+            servers.append({"kind": kind, "settings": settings, "live": live,
+                            "live_tags": live["tags"] if live else None})
     return {"servers": servers}
 
 
@@ -223,7 +284,7 @@ def run():
         findings, errors = [], []
         services = connected(config)
         fetched = {}
-        fetchers = {"sonarr": lambda s: fetch_arr(s, "sonarr"), "radarr": lambda s: fetch_arr(s, "radarr"),
+        fetchers = {**{key: (lambda s, key=key: fetch_arr(s, key)) for key, _ in ARRS},
                     "prowlarr": fetch_prowlarr, "seerr": fetch_seerr, "bazarr": fetch_bazarr,
                     **{key: fetch_client for key in app_info.LOGINS}}
         for key, fetch in fetchers.items():
@@ -246,33 +307,55 @@ def run():
             run_check("Unraid", unraid.check, snap,
                       moderation() if snap.get("plugins") or snap.get("containers") else None)
         clients = {key: fetched[key] for key in app_info.LOGINS if key in fetched}
-        for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")):
+        for key, label in ARRS:
             if key in fetched:
                 run_check(f"{label} tags", tags.check_arr, key, label, fetched[key])
                 run_check(f"{label} library", library.check, key, label, fetched[key])
                 run_check(f"{label} profiles and health", arr.check, key, label, fetched[key], snap)
                 run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
+                run_check(f"{label} queue", downloads.check_archives, label, fetched[key].get("queue"), snap)
         run_check("shared categories", downloads.check_shared_categories,
-                  {key: (label, fetched[key]) for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")) if key in fetched})
+                  {key: (label, fetched[key]) for key, label in ARRS if key in fetched})
         for key, client in clients.items():
             run_check(client["label"], downloads.check_client, key, client["label"], client["settings"], snap)
         if "prowlarr" in fetched:
             run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
         if "seerr" in fetched:
             run_check("Seerr tags", tags.check_seerr, fetched["seerr"])
+            run_check("Seerr", seerr.check, fetched["seerr"])
         if "bazarr" in fetched:
             run_check("Bazarr", bazarr.check, fetched["bazarr"], snap, [k for k in ("sonarr", "radarr") if k in services])
         if "sonarr" in fetched:
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
         findings.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], f["area"], f["title"]))
-        _write(RESULTS_FILE, {"ran_at": time.time(), "findings": findings, "errors": errors,
+        ran_at = time.time()
+        _write(RESULTS_FILE, {"ran_at": ran_at, "findings": findings, "errors": errors,
                               "checked": {"unraid": bool(snap), **{k: k in fetched for k in fetchers}}})
+        record_score(ran_at, results()["findings"])
         logger.info(f"Checks finished: {len(findings)} found" + (f", {len(errors)} couldn't run" if errors else ""))
         return True
     finally:
         _running.clear()
         _lock.release()
+
+
+def score(findings):
+    """The health score now and the counts behind it. Dismissed findings don't count."""
+    active = [f for f in findings if not f.get("dismissed")]
+    counts = {s: sum(1 for f in active if f["severity"] == s) for s in SCORE_COST}
+    return {"score": max(0, 100 - sum(SCORE_COST[s] * n for s, n in counts.items())), **counts}
+
+
+def record_score(at, findings):
+    history = _read(SCORES_FILE, [])
+    history.append({"at": at, **score(findings)})
+    _write(SCORES_FILE, history[-MAX_SCORES:])
+
+
+def scores():
+    """Every run's health score, oldest first."""
+    return _read(SCORES_FILE, [])
 
 
 def run_in_background():

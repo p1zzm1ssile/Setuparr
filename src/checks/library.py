@@ -8,10 +8,14 @@ TRASH = {
                "repack": "https://trash-guides.info/Sonarr/sonarr-collection-of-custom-formats/#repackproper"},
     "radarr": {"naming": "https://trash-guides.info/Radarr/Radarr-recommended-naming-scheme/",
                "repack": "https://trash-guides.info/Radarr/Radarr-collection-of-custom-formats/#repackproper"},
+    # TRaSH has no Lidarr guide
+    "lidarr": {"naming": "https://wiki.servarr.com/lidarr/settings#track-naming",
+               "repack": "https://wiki.servarr.com/lidarr/settings#file-management"},
 }
 TRASH_HARDLINKS = "https://trash-guides.info/File-and-Folder-Structure/Hardlinks-and-Instant-Moves/"
 PROPERS = {"preferAndUpgrade": "Prefer and Upgrade", "doNotUpgrade": "Do not Upgrade Automatically"}
-RENAME = {"sonarr": ("renameEpisodes", "Rename Episodes", "episodes"), "radarr": ("renameMovies", "Rename Movies", "films")}
+RENAME = {"sonarr": ("renameEpisodes", "Rename Episodes", "episodes"), "radarr": ("renameMovies", "Rename Movies", "films"),
+          "lidarr": ("renameTracks", "Rename Tracks", "tracks")}
 
 
 def check(service, label, d):

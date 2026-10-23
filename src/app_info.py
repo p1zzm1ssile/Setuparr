@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's own advice, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 
@@ -10,6 +10,7 @@ TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's 
 SERVICES = [
     ("sonarr", "Sonarr", 8989, 'Settings > General > Security in Sonarr'),
     ("radarr", "Radarr", 7878, 'Settings > General > Security in Radarr'),
+    ("lidarr", "Lidarr", 8686, 'Settings > General > Security in Lidarr'),
     ("prowlarr", "Prowlarr", 9696, 'Settings > General > Security in Prowlarr'),
     ("seerr", "Seerr", 5055, 'Settings > General > API Key in Jellyseerr or Overseerr'),
     ("bazarr", "Bazarr", 6767, 'Settings > General > Security > API Key in Bazarr'),
