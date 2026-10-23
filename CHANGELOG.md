@@ -11,6 +11,9 @@
   the files to Setuparr on your own network every night, runs the checks, and shows any new problem or warning as an
   Unraid notification. Nothing goes to the internet. It uses a key that keeps working, unlike the one-time command;
   **Make a new key** stops an old copy of the script working.
+- **Download clients:** qBittorrent seeding limits that remove torrents before Sonarr or Radarr import them (and count
+  as hit-and-run on private trackers), unfinished downloads on a different share from finished ones, and downloads
+  stuck in Sonarr or Radarr's queue as RAR archives with no Unpackerr to extract them.
 - The terminal command now also sends the names of your installed containers and of the folders in appdata, and how
   much space Docker's unused images and volumes take. **Get the command again** to get the cleanup checks.
 

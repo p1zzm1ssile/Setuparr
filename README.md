@@ -71,14 +71,16 @@ From Sonarr and Radarr's download client settings:
 - Download clients reached at `localhost`, which inside a container is the container itself.
 - Download clients with no category, and Sonarr and Radarr sharing one category in the same client.
 - Deluge used with a category while its Label plugin is off.
+- Downloads stuck in the queue because they're RAR archives, with no Unpackerr to extract them (or Unpackerr not
+  connected).
 
 When you connect qBittorrent, Transmission or Deluge under **Settings** (Setuparr only reads their settings):
 
 - Downloads saved to a folder that isn't in the client's folder mappings, so they stay inside the container (needs
   your Unraid settings).
-- Unfinished downloads kept in a different folder mapping, so every finished download is copied.
+- Unfinished downloads kept in a different folder mapping or share, so every finished download is copied.
 - qBittorrent: categories that don't choose the folder (Manual torrent management), pre-allocation on a cached share,
-  and networks let in without a password.
+  networks let in without a password, and seeding limits that remove torrents before they're imported or seeded.
 
 ### Library (Sonarr, Radarr)
 

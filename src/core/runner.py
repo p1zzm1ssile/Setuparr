@@ -224,7 +224,8 @@ def fetch_arr(arr, kind):
     }
     # Only some checks need these, and Sonarr v3 has no custom formats
     for key, path in (("media", "/config/mediamanagement"), ("handling", "/config/downloadclient"),
-                      ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host")):
+                      ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host"),
+                      ("queue", "/queue?pageSize=250")):
         try:
             data[key] = arr.call("GET", path)
         except ServiceError:
@@ -302,6 +303,7 @@ def run():
                 run_check(f"{label} library", library.check, key, label, fetched[key])
                 run_check(f"{label} profiles and health", arr.check, key, label, fetched[key], snap)
                 run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
+                run_check(f"{label} queue", downloads.check_archives, label, fetched[key].get("queue"), snap)
         run_check("shared categories", downloads.check_shared_categories,
                   {key: (label, fetched[key]) for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")) if key in fetched})
         for key, client in clients.items():

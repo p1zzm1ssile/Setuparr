@@ -16,6 +16,11 @@ TRASH_DELUGE_LABELS = "https://trash-guides.info/Downloaders/Deluge/Using-Labels
 CATEGORY_FIELD = {"sonarr": "tvCategory", "radarr": "movieCategory"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 CACHE_FIRST = ("yes", "only", "prefer")  # Unraid share settings that put new files on a cache pool
+TRASH_UNPACKERR = "https://unpackerr.zip/docs/install/docker"
+REMOVE_ACTIONS = {1: "removes the torrent", 3: "removes the torrent and its files"}
+# Torrents removed before this share ratio or seeding time may not have been imported yet, and private trackers
+# count them as hit-and-run
+LOW_RATIO, LOW_MINUTES = 1, 24 * 60
 
 
 def field(client, name):
@@ -127,6 +132,67 @@ def share_for(snapshot, mapping):
     return next((sh for sh in snapshot.get("shares", []) if sh["name"] == where[1]), None)
 
 
+def host_path(mapping, path):
+    """Where a path inside the container is on the server."""
+    rest = unraid.clean(path)[len(unraid.clean(mapping["container"])):]
+    return unraid.clean(mapping["host"] + rest)
+
+
+def share_of(mapping, path):
+    where = unraid.location(host_path(mapping, path))
+    return where[1] if where else None
+
+
+def check_archives(label, queue, snapshot=None):
+    """Downloads waiting in Sonarr or Radarr's queue because they're RAR archives, which they can't import."""
+    records = (queue or {}).get("records") if isinstance(queue, dict) else queue
+    stuck = []
+    for r in records or []:
+        messages = [m for s in r.get("statusMessages") or [] for m in s.get("messages") or []]
+        if any("archive" in m.lower() for m in messages):
+            stuck.append(r.get("title") or "?")
+    if not stuck:
+        return []
+    unpackerr = any("unpackerr" in f"{c['image']} {c['name']}".lower() for c in (snapshot or {}).get("containers", []))
+    if unpackerr:
+        detail = (f"{label} found RAR archives in these downloads and is waiting for them to be extracted. Unpackerr is "
+                  f"installed but hasn't extracted them, so it's probably not connected to {label}.")
+        steps = [f"In Unpackerr's template, set {label.upper()}_URL and {label.upper()}_API_KEY, and map the same "
+                 "/data folder the download client uses.", "Check Unpackerr's log for errors."]
+    else:
+        detail = (f"{label} found RAR archives in these downloads. It can't import an archive, so they sit in the queue "
+                  "forever. Some indexers, mostly private ones, release like this.")
+        steps = ["Install Unpackerr from the Apps tab. It extracts archives as soon as they finish, then Sonarr and "
+                 "Radarr import them and Unpackerr tidies up.",
+                 f"In its template, set {label.upper()}_URL and {label.upper()}_API_KEY, and map the same /data folder "
+                 "the download client uses."]
+    return [finding("archives", AREA, WARNING, label, f"{label} can't import {plural(len(stuck), 'download')} packed "
+                    "as RAR archives", detail, steps=steps, items=stuck, link=TRASH_UNPACKERR)]
+
+
+def check_seeding(label, seeding):
+    """qBittorrent removing torrents soon after they finish."""
+    if not seeding or seeding.get("action") not in REMOVE_ACTIONS:
+        return []
+    ratio, minutes = seeding.get("ratio"), seeding.get("minutes")
+    low = []
+    if ratio is not None and 0 <= ratio < LOW_RATIO:
+        low.append(f"Share ratio limit: {ratio:g}")
+    if minutes is not None and 0 <= minutes < LOW_MINUTES:
+        low.append(f"Seeding time limit: {minutes} minutes")
+    if not low:
+        return []
+    return [finding(
+        "seed-limits", AREA, WARNING, label, f"{label} removes torrents soon after they finish",
+        f"When a torrent reaches these limits, {label} {REMOVE_ACTIONS[seeding['action']]}. That can happen before "
+        "Sonarr or Radarr have imported it, and private trackers count a torrent removed this early as a hit-and-run.",
+        steps=[f"In {label}, go to Tools > Options > BitTorrent > Seeding Limits and set the action to Stop torrent, "
+               "or raise the limits.",
+               "To remove torrents once they're imported, set Seed Ratio and Seed Time on each indexer in Sonarr and "
+               "Radarr (or in Prowlarr) instead, so they only remove what they've imported."],
+        items=low, link=TRASH_QBITTORRENT)]
+
+
 def check_client(service, label, s, snapshot=None):
     """One client's own settings, from services.clients."""
     findings = []
@@ -149,13 +215,19 @@ def check_client(service, label, s, snapshot=None):
                 items=[f"{what}: {path}" for what, path in lost], link=TRASH_PATHS))
 
         save, unfinished = mapping_for(container, s["save_path"]), s.get("incomplete_path")
-        if save and unfinished and mapping_for(container, unfinished) not in (None, save):
+        unfinished_mapping = mapping_for(container, unfinished) if unfinished else None
+        # One mapping can still span shares, like /mnt/user mapped to /mnt/user
+        shares = {share_of(save, p) for p in (s["save_path"], unfinished)} if save and unfinished_mapping == save else set()
+        other_share = None not in shares and len(shares) == 2
+        if save and unfinished and (unfinished_mapping not in (None, save) or other_share):
             findings.append(finding(
                 "incomplete-mapping", AREA, WARNING, label,
                 f"{label} copies every finished download to another folder mapping",
-                f"Unfinished downloads wait in {unfinished}, which is a different folder mapping from {s['save_path']}. "
-                "Docker treats each mapping as its own drive, so every finished download is copied in full instead of "
-                "moved instantly.",
+                f"Unfinished downloads wait in {unfinished}, which is "
+                + (f"on a different share from {s['save_path']}. Unraid keeps each share in its own folders, so "
+                   if other_share else f"a different folder mapping from {s['save_path']}. Docker treats each mapping "
+                   "as its own drive, so ")
+                + "every finished download is copied in full instead of moved instantly.",
                 steps=[f"In {label}, turn off the separate folder for unfinished downloads, or put it inside the same "
                        "mapping as the save folder, e.g. /data/torrents/incomplete."],
                 items=[f"Save folder: {s['save_path']}", f"Unfinished downloads: {unfinished}"], link=TRASH_PATHS))
@@ -173,6 +245,7 @@ def check_client(service, label, s, snapshot=None):
 
         unraid.sent(snapshot, findings)
 
+    findings += check_seeding(label, s.get("seeding"))
     if s.get("automatic") is False and s["categories"]:
         findings.append(finding(
             "manual-mode", AREA, TIP, label,
