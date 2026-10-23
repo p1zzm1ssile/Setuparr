@@ -14,6 +14,10 @@
 - **Download clients:** qBittorrent seeding limits that remove torrents before Sonarr or Radarr import them (and count
   as hit-and-run on private trackers), unfinished downloads on a different share from finished ones, and downloads
   stuck in Sonarr or Radarr's queue as RAR archives with no Unpackerr to extract them.
+- **From the idea list:** Unraid on DHCP, Telnet on, disks that never spin down or run hot, the array not starting by
+  itself, no UPS, Plex, Jellyfin or Emby transcoding to RAM with no memory limit, Sonarr and Radarr with no recycle
+  bin or unused quality profiles, and Radarr films grabbed as soon as they're announced. The terminal command now
+  also sends `disk.cfg` and the UPS settings (only the settings above and the disks' temperature are kept).
 - The terminal command now also sends the names of your installed containers and of the folders in appdata, and how
   much space Docker's unused images and volumes take. **Get the command again** to get the cleanup checks.
 

@@ -589,3 +589,32 @@ def test_docker_sizes():
     assert unraid.parse_size("1.5GB (30%)") == 1_500_000_000
     assert unraid.parse_size("512kB") == 512_000
     assert unraid.parse_size("0B") == 0 and unraid.parse_size("") == 0
+
+
+def test_server_settings_from_the_idea_list():
+    files = GOOD + HAVE_PLUGINS
+    good = [cfg("network.cfg", USE_DHCP="no"), cfg("ident.cfg", USE_TELNET="no"),
+            cfg("disk.cfg", spindownDelay="1", startArray="yes"),
+            cfg("plugins/dynamix.apcupsd/dynamix.apcupsd.cfg", SERVICE="enable", NISIP="192.168.1.5")]
+    snap, findings = run_with(files + good)
+    assert findings == [] and "192.168.1.5" not in json.dumps(snap)
+    bad = [cfg("network.cfg", USE_DHCP="yes"), cfg("ident.cfg", USE_TELNET="yes"),
+           cfg("disk.cfg", spindownDelay="0", startArray="no")]
+    assert titles(run_with(files + bad)[1]) == ["Unraid gets its address from your router", "Telnet is turned on",
+                                                "Disks never spin down", "The array doesn't start by itself after a restart",
+                                                "Unraid doesn't know about a UPS"]
+    # The NUT plugin counts as a UPS
+    nut = plugin("nut-dw.plg", "https://example.com/nut.plg")
+    assert "Unraid doesn't know about a UPS" not in titles(run_with(files + [nut, cfg("disk.cfg", spindownDelay="1")])[1])
+
+
+def test_hot_disks_and_transcoding_to_ram():
+    disks = ("disks.ini", b'["parity"]\nname="parity"\ntype="Parity"\nstatus="DISK_OK"\ntemp="52"\n'
+                          b'["disk1"]\nname="disk1"\ntype="Data"\nstatus="DISK_OK"\ntemp="*"\n'
+                          b'["cache"]\nname="cache"\ntype="Cache"\nstatus="DISK_OK"\ntemp="60"\n')
+    _, findings = run_with(GOOD + HAVE_PLUGINS + [disks])
+    hot = {f["title"]: f for f in findings}["1 disk is running hot"]
+    assert hot["items"] == ["Parity: 52°C"]
+    plex = template("plex", "lscr.io/linuxserver/plex", [("/tmp", "/transcode"), ("/mnt/user/data/media", "/data/media")])
+    _, findings = run_with(GOOD + HAVE_PLUGINS + [plex])
+    assert "Transcodes in RAM have no size limit" in titles(findings)

@@ -344,7 +344,7 @@ async function showUnraid(message) {
     el("div", { class: "notice" },
       el("strong", { text: "Passwords, API keys and personal details are removed. " }),
       "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; ",
-      "the few Unraid settings it checks; each disk's slot, state, size, free space and error count; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; the PCI IDs of your devices, which say what kind of GPU and network card you have; the names of your installed containers and of the folders in appdata; and how much space Docker's unused images and volumes take. ",
+      "the few Unraid settings it checks; each disk's slot, state, size, free space, error count and temperature; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; the PCI IDs of your devices, which say what kind of GPU and network card you have; the names of your installed containers and of the folders in appdata; and how much space Docker's unused images and volumes take. ",
       "Everything else (passwords, API keys, VPN details, email settings, IP addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the files are read and never saved. ",
       "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
     el("div", { class: "panel" },
@@ -360,7 +360,7 @@ async function showUnraid(message) {
         el("code", { text: "\\\\tower\\flash\\config" }), " from your computer, and choose the ",
         el("code", { text: "plugins\\dockerMan\\templates-user" }), " and ", el("code", { text: "shares" }),
         " folders, or a zip of them. Add ", el("code", { text: "docker.cfg" }), ", ", el("code", { text: "share.cfg" }), ", ",
-        el("code", { text: "network.cfg" }), ", ", el("code", { text: "ident.cfg" }), ", ",
+        el("code", { text: "network.cfg" }), ", ", el("code", { text: "ident.cfg" }), ", ", el("code", { text: "disk.cfg" }), ", ",
         el("code", { text: "plugins\\dynamix\\dynamix.cfg" }), ", ", el("code", { text: "plugins\\appdata.backup" }),
         " and the ", el("code", { text: ".plg" }), " files in ", el("code", { text: "plugins" }),
         " for the Docker, share, time, alert, backup and plugin checks. Only those files are sent; everything else is skipped. ",
@@ -666,7 +666,7 @@ function linkLabel(link) {
 // in appdata and how much space Docker's unused images and volumes take. Run from /boot/config.
 function sendCommand(query, curlOptions = "") {
   return "tar -cz plugins/dockerMan/templates-user shares " +
-    "$(ls -d docker.cfg share.cfg network.cfg ident.cfg plugins/dynamix/dynamix.cfg plugins/*.plg " +
+    "$(ls -d docker.cfg share.cfg network.cfg ident.cfg disk.cfg plugins/dynamix/dynamix.cfg plugins/dynamix.apcupsd/dynamix.apcupsd.cfg plugins/*.plg " +
     "plugins/appdata.backup*/config.json plugins/compose.manager/projects 2>/dev/null) " +
     "$(test -f /var/local/emhttp/disks.ini && echo -C /var/local/emhttp disks.ini) " +
     "$(test -f /var/lib/docker/unraid-autostart && echo -C /var/lib/docker unraid-autostart) | " +

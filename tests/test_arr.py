@@ -16,7 +16,7 @@ def profile(id, name, cutoff=7, upgrade=True, scores=(100, -10000), minimum=0, c
 def sonarr(**over):
     data = {
         "items": [{"title": "The Wire", "qualityProfileId": 1}, {"title": "Bluey", "qualityProfileId": 1}],
-        "profiles": [profile(1, "WEB-1080p"), profile(2, "Unused", minimum=99999)],
+        "profiles": [profile(1, "WEB-1080p")],
         "formats": [{"id": 0, "name": "cf0"}, {"id": 1, "name": "cf1"}],
         "health": [{"source": "UpdateCheck", "type": "ok", "message": ""}],
         "host": {"authenticationMethod": "forms", "authenticationRequired": "enabled", "backupFolder": "Backups",
@@ -79,3 +79,16 @@ def test_backups():
     assert titles(findings) == ["Sonarr doesn't keep backups", "Sonarr's backups are lost when its container is updated"]
     host["backupFolder"] = "/config/Backups"
     assert titles(arr.check("sonarr", "Sonarr", sonarr(host=host), snapshot)) == ["Sonarr doesn't keep backups"]
+
+
+def test_unused_profiles_recycle_bin_and_availability():
+    # A profile nothing uses is reported once, and its own settings aren't checked
+    findings = arr.check("sonarr", "Sonarr", sonarr(profiles=[profile(1, "WEB-1080p"), profile(2, "Unused", minimum=99999)]))
+    assert titles(findings) == ["1 quality profile in Sonarr isn't used"]
+    assert titles(arr.check("sonarr", "Sonarr", sonarr(media={"recycleBin": ""}))) == ["Sonarr deletes files for good"]
+    assert arr.check("sonarr", "Sonarr", sonarr(media={"recycleBin": "/data/.recycle"})) == []
+    films = [{"title": "Dune", "qualityProfileId": 1, "minimumAvailability": "announced", "monitored": True, "hasFile": False},
+             {"title": "Heat", "qualityProfileId": 1, "minimumAvailability": "announced", "monitored": True, "hasFile": True},
+             {"title": "Up", "qualityProfileId": 1, "minimumAvailability": "released", "monitored": True, "hasFile": False}]
+    findings = arr.check("radarr", "Radarr", sonarr(items=films))
+    assert titles(findings) == ["1 film can be grabbed as soon as it is announced"] and findings[0]["items"] == ["Dune"]

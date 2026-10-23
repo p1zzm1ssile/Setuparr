@@ -60,6 +60,8 @@ From the plugins and PCI IDs the terminal command sends:
   doesn't have.
 - A **Realtek RTL8125, RTL8126 or RTL8168** network card on Unraid's built-in driver, and a **Coral** accelerator with
   no driver.
+- **Server settings:** Unraid on DHCP, Telnet turned on, disks that never spin down or are running hot, the array
+  not starting by itself, no UPS set up, and Plex, Jellyfin or Emby transcoding to RAM with no memory limit.
 - **Cleanup:** appdata folders no installed container uses, templates for containers you've removed, and more than
   1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything itself.
 
@@ -95,6 +97,7 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
   download client.
 - **No login**, or no password asked on your network, which a reverse proxy on the same server opens to everyone.
 - **Set Permissions** turned on, which fights Unraid's PUID, PGID and UMASK.
+- **No recycle bin**, quality profiles nothing uses, and Radarr films set to be grabbed as soon as they're announced.
 - **Quality profiles:** no custom formats at all, a profile where every custom format scores 0, a Minimum Custom
   Format Score no release can reach, Upgrade Until set to the lowest quality, and upgrades turned off when custom
   formats would pick better releases.
@@ -148,7 +151,7 @@ with what each does, when to use it and an example.
 Setuparr never looks around your server and doesn't need the Docker socket. It reads only the Unraid settings files
 you send it: the Docker templates, the share settings and Compose Manager's compose files.
 
-It also reads Unraid's `docker.cfg`, `share.cfg`, `network.cfg`, `ident.cfg` and `plugins/dynamix/dynamix.cfg`, the
+It also reads Unraid's `docker.cfg`, `share.cfg`, `network.cfg`, `ident.cfg`, `disk.cfg`, `plugins/dynamix/dynamix.cfg` and the UPS settings, the
 installed plugins' `.plg` files and Appdata Backup's settings. The terminal command adds your Unraid version, the PCI
 IDs from `lspci -n` (numbers like `0300:8086:4680`, which say what kind of GPU and network card you have), the state of
 your disks (`/var/local/emhttp/disks.ini`), the order containers start in (`/var/lib/docker/unraid-autostart`), the
@@ -158,7 +161,7 @@ Docker's unused images and volumes take (`docker system df`).
 **Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
 is kept: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a
 GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; the few
-Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space and error count; each
+Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space, error count and temperature; each
 plugin's file name, the address it was installed from and the Unraid versions it's made for; Appdata Backup's
 schedule, destination and skipped containers; the names of your installed containers and appdata folders; and the size
 of Docker's unused images and volumes. Everything else (passwords, API keys, VPN details, email settings, IP

@@ -45,17 +45,23 @@ KEPT_VARIABLES = {"PUID", "PGID", "UMASK", "UMASK_SET"}
 KEPT_SETTINGS = {
     "docker": ("DOCKER_ENABLED", "DOCKER_IMAGE_TYPE", "DOCKER_IMAGE_FILE", "DOCKER_NETWORK_TYPE", "DOCKER_LOG_ROTATION"),
     "share": ("shareUserExclusive", "fuse_useino", "shareMoverSchedule"),
-    "network": ("BRIDGING",),
-    "ident": ("USE_NTP", "USE_SSL", "PORT", "PORTSSL"),
+    "network": ("BRIDGING", "USE_DHCP"),
+    "ident": ("USE_NTP", "USE_SSL", "PORT", "PORTSSL", "USE_TELNET"),
+    "disk": ("spindownDelay", "startArray"),
+    "ups": ("SERVICE",),
     # dynamix.cfg has sections; its email settings are never kept
     "dynamix": ("parity.mode", "notify.alert", "notify.warning"),
 }
 SETTINGS_FILES = {"docker.cfg": "docker", "share.cfg": "share", "network.cfg": "network", "ident.cfg": "ident",
-                  "dynamix.cfg": "dynamix"}
+                  "dynamix.cfg": "dynamix", "disk.cfg": "disk", "dynamix.apcupsd.cfg": "ups"}
 # Unraid's own defaults for the dynamix.cfg settings above, used when they aren't in the file
 DYNAMIX_DEFAULTS = {"parity.mode": "0", "notify.alert": "1", "notify.warning": "1"}
 # What's kept of each disk in disks.ini: no serial numbers (id) or device names
-KEPT_DISK = ("name", "type", "status", "fsSize", "fsFree", "numErrors")
+KEPT_DISK = ("name", "type", "status", "fsSize", "fsFree", "numErrors", "temp")
+# A disk this hot (°C) wears out faster. Pools are often NVMe, which runs hotter
+HOT_DISK = {"Parity": 50, "Data": 50, "Cache": 70}
+# Folders on the server that live in RAM
+RAM_FOLDERS = ("/tmp", "/dev/shm")
 BACKUP_FOLDERS = ("appdata.backup", "appdata.backup.beta")
 MAX_FILE = 2 * 1024 * 1024
 MAX_TOTAL = 50 * 1024 * 1024
@@ -667,6 +673,9 @@ def check(snapshot, moderation=None):
     findings += check_mover(settings.get("share"), snapshot["shares"], arrs + clients, snapshot.get("disks"))
     findings += check_backup(snapshot.get("backup"), snapshot.get("plugins"), snapshot["shares"], containers)
     findings += check_cleanup(snapshot)
+    findings += check_disk_temps(snapshot.get("disks"))
+    findings += check_server(settings, snapshot.get("plugins"))
+    findings += check_ram_transcoding([c for c in containers if c["role"] == "server"])
     return sent(snapshot, findings)
 
 
@@ -1364,6 +1373,91 @@ def check_backup(backup, plugins, shares, containers):
 
 
 # Plugins and drivers
+
+
+def check_disk_temps(disks):
+    hot = []
+    for d in disks or []:
+        limit, temp = HOT_DISK.get(d.get("type")), as_int(d.get("temp"))  # "*" when spun down
+        if limit and temp >= limit:
+            hot.append(f"{disk_label(d)}: {temp}°C")
+    if not hot:
+        return []
+    return [finding(
+        "hot-disks", AREA, WARNING, "Unraid", f"{plural(len(hot), 'disk is', 'disks are')} running hot",
+        "Hard drives last longest below about 45°C, and wear out faster above 50°C. Parity checks and long copies "
+        "make it worse.",
+        steps=["Check the case fans are spinning and the drive cage isn't clogged with dust.",
+               "Set Settings > Disk Settings > Default spin down delay so idle disks spin down and cool off.",
+               "Unraid warns you at the temperatures in Settings > Disk Settings; lower them if they're above 45°C "
+               "and 55°C."],
+        items=hot, link=UNRAID_DOCS)]
+
+
+def check_server(settings, plugins):
+    """Unraid's own network, disk and power settings."""
+    findings = []
+    network, ident, disk, ups = (settings.get(k) or {} for k in ("network", "ident", "disk", "ups"))
+    if network.get("USE_DHCP") == "yes":
+        findings.append(finding(
+            "dhcp", AREA, TIP, "Unraid", "Unraid gets its address from your router",
+            "If the router gives Unraid a different address after a restart, your bookmarks, the apps you've pointed "
+            "at Unraid's address and any port forwards stop working.",
+            steps=["Reserve Unraid's address in your router's DHCP settings (often called a static lease or "
+                   "reservation), or set a static address in Settings > Network Settings."],
+            link=UNRAID_DOCS))
+    if ident.get("USE_TELNET") == "yes":
+        findings.append(finding(
+            "telnet", AREA, WARNING, "Unraid", "Telnet is turned on",
+            "Telnet sends your root password unencrypted, so anyone on your network can read it. SSH does the same job "
+            "safely.",
+            steps=["In Settings > Management Access, set Use TELNET to No, then Apply."],
+            link=UNRAID_DOCS))
+    if disk.get("spindownDelay") == "0":
+        findings.append(finding(
+            "spindown", AREA, TIP, "Unraid", "Disks never spin down",
+            "Default spin down delay is Never, so every array disk spins all day, even when nothing reads from it. "
+            "That uses power and keeps them warm. Media servers usually only need one disk awake at a time.",
+            steps=["In Settings > Disk Settings, set Default spin down delay to 30 minutes or an hour."],
+            link=UNRAID_DOCS))
+    if disk.get("startArray") == "no":
+        findings.append(finding(
+            "start-array", AREA, TIP, "Unraid", "The array doesn't start by itself after a restart",
+            "After a power cut or an update, your shares and containers stay off until you start the array by hand. "
+            "That's expected if your array is encrypted and you type the key at each start.",
+            steps=["If it isn't encrypted, set Settings > Disk Settings > Enable auto start to Yes."],
+            link=UNRAID_DOCS))
+    nut = any(p["file"].lower().startswith("nut") for p in plugins or [])
+    # disk.cfg is always there when the terminal command was used, so a missing UPS file means it's never been set up
+    if disk and ups.get("SERVICE") != "enable" and not nut:
+        findings.append(finding(
+            "no-ups", AREA, TIP, "Unraid", "Unraid doesn't know about a UPS",
+            "Without a UPS, a power cut stops the server mid-write, which can damage files and starts a parity check. "
+            "If you have one, Unraid can shut down cleanly before its battery runs out.",
+            steps=["Connect the UPS's USB cable to the server and turn on Settings > UPS Settings > Start APC UPS "
+                   "daemon (it works with most brands), or install the NUT plugin for other UPSes.",
+                   "If you don't have a UPS, a small one for the server and router is worth considering."],
+            link=UNRAID_DOCS))
+    return findings
+
+
+def check_ram_transcoding(servers):
+    """Plex, Jellyfin or Emby transcoding to RAM with no memory limit."""
+    unlimited = []
+    for c in servers:
+        ram = [m for m in c["mounts"] if any(inside(clean(m["host"]), f) for f in RAM_FOLDERS)]
+        if ram and "--memory" not in c.get("flags", []):
+            unlimited.append(f"{c['name']}: {ram[0]['host']} → {ram[0]['container']}")
+    if not unlimited:
+        return []
+    return [finding(
+        "ram-transcode", AREA, TIP, "Unraid", "Transcodes in RAM have no size limit",
+        "These containers transcode to a folder in RAM. Nothing stops it growing: a few streams at once, or a stuck "
+        "transcode, can use all your memory, and then Unraid stops containers to free some.",
+        steps=["Edit the container, switch to Advanced View and add --memory=8G (or what you can spare) to Extra "
+               "Parameters. The transcode folder counts towards it.",
+               "Or map /dev/shm instead of /tmp, which Unraid limits to half your RAM."],
+        items=unlimited, link=GUIDE)]
 
 
 def size_text(n):
