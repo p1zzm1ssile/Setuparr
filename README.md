@@ -115,6 +115,12 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
   settings).
 - Backups set to Manually.
 
+### Seerr
+
+- Requests sent with a quality profile or root folder Sonarr or Radarr no longer has, so they're turned down.
+- No default server for TV, films or 4K, servers Seerr can't reach, and films added to be grabbed as soon as they're
+  announced.
+
 ### Tags (Sonarr, Radarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).

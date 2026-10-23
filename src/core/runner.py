@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import PROBLEM, SEVERITY_ORDER, WARNING, anime, plural, arr, bazarr, downloads, library, tags, unraid
+from checks import PROBLEM, SEVERITY_ORDER, WARNING, anime, arr, bazarr, downloads, library, plural, seerr, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -247,10 +247,12 @@ def fetch_seerr(s):
     for kind in ("sonarr", "radarr"):
         for settings in s.call("GET", f"/settings/{kind}") or []:
             try:
-                live = (s.call("GET", f"/service/{kind}/{settings['id']}") or {}).get("tags")
+                found = s.call("GET", f"/service/{kind}/{settings['id']}") or {}
+                live = {k: found.get(k) for k in ("profiles", "rootFolders", "tags")}
             except ServiceError:
-                live = None  # The server may be down; its tags just aren't checked
-            servers.append({"kind": kind, "settings": settings, "live_tags": live})
+                live = None  # The server may be down
+            servers.append({"kind": kind, "settings": settings, "live": live,
+                            "live_tags": live["tags"] if live else None})
     return {"servers": servers}
 
 
@@ -312,6 +314,7 @@ def run():
             run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
         if "seerr" in fetched:
             run_check("Seerr tags", tags.check_seerr, fetched["seerr"])
+            run_check("Seerr", seerr.check, fetched["seerr"])
         if "bazarr" in fetched:
             run_check("Bazarr", bazarr.check, fetched["bazarr"], snap, [k for k in ("sonarr", "radarr") if k in services])
         if "sonarr" in fetched:
