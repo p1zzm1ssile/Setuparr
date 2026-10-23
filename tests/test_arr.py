@@ -92,3 +92,11 @@ def test_unused_profiles_recycle_bin_and_availability():
              {"title": "Up", "qualityProfileId": 1, "minimumAvailability": "released", "monitored": True, "hasFile": False}]
     findings = arr.check("radarr", "Radarr", sonarr(items=films))
     assert titles(findings) == ["1 film can be grabbed as soon as it is announced"] and findings[0]["items"] == ["Dune"]
+
+
+def test_lidarr():
+    artists = [{"title": "Low", "qualityProfileId": 1}]
+    # The TRaSH custom format checks don't apply, the rest do
+    assert arr.check("lidarr", "Lidarr", sonarr(items=artists, formats=[])) == []
+    findings = arr.check("lidarr", "Lidarr", sonarr(items=artists, host={"authenticationMethod": "none"}))
+    assert titles(findings) == ["Anyone who can reach Lidarr can change it"]

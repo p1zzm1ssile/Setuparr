@@ -13,7 +13,8 @@ TRASH_QBITTORRENT = "https://trash-guides.info/Downloaders/qBittorrent/Basic-Set
 TRASH_PATHS = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Unraid/"
 TRASH_DOWNLOADERS = "https://trash-guides.info/Downloaders/"
 TRASH_DELUGE_LABELS = "https://trash-guides.info/Downloaders/Deluge/Using-Labels/"
-CATEGORY_FIELD = {"sonarr": "tvCategory", "radarr": "movieCategory"}
+CATEGORY_FIELD = {"sonarr": "tvCategory", "radarr": "movieCategory", "lidarr": "musicCategory"}
+CATEGORY_EXAMPLE = {"sonarr": "tv-sonarr", "radarr": "radarr", "lidarr": "lidarr"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 CACHE_FIRST = ("yes", "only", "prefer")  # Unraid share settings that put new files on a cache pool
 TRASH_UNPACKERR = "https://unpackerr.zip/docs/install/docker"
@@ -64,7 +65,7 @@ def check_arr(service, label, d, clients=None):
             f"Without a category, {label}'s downloads are mixed in with everything else in the client. {label} then "
             "can't tell its own downloads apart, and they can't go to their own folder.",
             steps=[f"In {label}, open each download client below and set a category, e.g. "
-                   f"{'tv-sonarr' if service == 'sonarr' else 'radarr'}."],
+                   f"{CATEGORY_EXAMPLE[service]}."],
             items=[c["name"] for c in uncategorised], link=TRASH_DOWNLOADERS))
 
     deluge = clients.get("deluge")

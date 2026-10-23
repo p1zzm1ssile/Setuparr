@@ -65,7 +65,7 @@ From the plugins and PCI IDs the terminal command sends:
 - **Cleanup:** appdata folders no installed container uses, templates for containers you've removed, and more than
   1 GB of Docker images and volumes nothing uses. Setuparr never deletes anything itself.
 
-### Download clients (Sonarr, Radarr, qBittorrent, Transmission, Deluge)
+### Download clients (Sonarr, Radarr, Lidarr, qBittorrent, Transmission, Deluge)
 
 From Sonarr and Radarr's download client settings:
 
@@ -84,14 +84,16 @@ When you connect qBittorrent, Transmission or Deluge under **Settings** (Setupar
 - qBittorrent: categories that don't choose the folder (Manual torrent management), pre-allocation on a cached share,
   networks let in without a password, and seeding limits that remove torrents before they're imported or seeded.
 
-### Library (Sonarr, Radarr)
+### Library (Sonarr, Radarr, Lidarr)
 
 - Root folders Sonarr or Radarr can't reach.
 - Use Hardlinks instead of Copy turned off.
 - Propers and Repacks not set to Do Not Prefer when you use the TRaSH Repack/Proper custom format.
 - Rename Episodes or Rename Movies turned off.
 
-### Health, security, profiles and backups (Sonarr, Radarr)
+### Health, security, profiles and backups (Sonarr, Radarr, Lidarr)
+
+Lidarr gets every check here except the custom format ones, which follow the TRaSH guides and they don't cover Lidarr.
 
 - Anything on Sonarr or Radarr's own **System > Status** health list, like failing indexers or an unreachable
   download client.
@@ -121,7 +123,7 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
 - No default server for TV, films or 4K, servers Seerr can't reach, and films added to be grabbed as soon as they're
   announced.
 
-### Tags (Sonarr, Radarr, Prowlarr, Seerr)
+### Tags (Sonarr, Radarr, Lidarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
 - Indexers, download clients and profiles limited to a tag no series or film has, so they're never used.

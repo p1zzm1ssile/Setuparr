@@ -10,6 +10,7 @@ TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's 
 SERVICES = [
     ("sonarr", "Sonarr", 8989, 'Settings > General > Security in Sonarr'),
     ("radarr", "Radarr", 7878, 'Settings > General > Security in Radarr'),
+    ("lidarr", "Lidarr", 8686, 'Settings > General > Security in Lidarr'),
     ("prowlarr", "Prowlarr", 9696, 'Settings > General > Security in Prowlarr'),
     ("seerr", "Seerr", 5055, 'Settings > General > API Key in Jellyseerr or Overseerr'),
     ("bazarr", "Bazarr", 6767, 'Settings > General > Security > API Key in Bazarr'),

@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr & Radarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr" };
 let dashArea = "all";
 let showDismissed = false;
 
@@ -174,7 +174,7 @@ async function showDashboard() {
 
   const setupNeeded = [];
   if (!connected.length) {
-    setupNeeded.push(el("li", {}, "Connect Sonarr, Radarr, Prowlarr, Seerr or your download clients under ",
+    setupNeeded.push(el("li", {}, "Connect Sonarr, Radarr, Lidarr, Prowlarr, Seerr or your download clients under ",
       el("a", { href: "#/settings/sonarr", text: "Settings" }), " to check them."));
   }
   if (r.checked && !r.checked.unraid) {

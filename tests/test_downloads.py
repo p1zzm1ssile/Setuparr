@@ -172,3 +172,9 @@ def test_archives_waiting_in_the_queue():
     snap = snapshot(container("unpackerr", "golift/unpackerr"))
     assert "hasn't extracted them" in downloads.check_archives("Sonarr", queue, snap)[0]["detail"]
     assert downloads.check_archives("Sonarr", {"records": []}) == [] and downloads.check_archives("Sonarr", None) == []
+
+
+def test_lidarr_download_clients():
+    lidarr = arr([entry(1, "qBittorrent", key="musicCategory", category="")])
+    f = titles(downloads.check_arr("lidarr", "Lidarr", lidarr))
+    assert "e.g. lidarr." in f["1 download client in Lidarr has no category"]["steps"][0]

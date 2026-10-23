@@ -212,12 +212,16 @@ def forget_snapshot():
 # Fetching from the apps
 
 
+ITEM_PATHS = {"sonarr": "/series", "radarr": "/movie", "lidarr": "/artist"}
+ARRS = (("sonarr", "Sonarr"), ("radarr", "Radarr"), ("lidarr", "Lidarr"))
+
+
 def fetch_arr(arr, kind):
     data = {
         "tags": arr.call("GET", "/tag/detail"),
         "indexers": arr.call("GET", "/indexer"),
         "clients": arr.call("GET", "/downloadclient"),
-        "items": arr.call("GET", "/series" if kind == "sonarr" else "/movie"),
+        "items": arr.call("GET", ITEM_PATHS[kind]),
         "roots": arr.call("GET", "/rootfolder"),
         "profiles": arr.call("GET", "/qualityprofile"),
         "naming": arr.call("GET", "/config/naming"),
@@ -276,7 +280,7 @@ def run():
         findings, errors = [], []
         services = connected(config)
         fetched = {}
-        fetchers = {"sonarr": lambda s: fetch_arr(s, "sonarr"), "radarr": lambda s: fetch_arr(s, "radarr"),
+        fetchers = {**{key: (lambda s, key=key: fetch_arr(s, key)) for key, _ in ARRS},
                     "prowlarr": fetch_prowlarr, "seerr": fetch_seerr, "bazarr": fetch_bazarr,
                     **{key: fetch_client for key in app_info.LOGINS}}
         for key, fetch in fetchers.items():
@@ -299,7 +303,7 @@ def run():
             run_check("Unraid", unraid.check, snap,
                       moderation() if snap.get("plugins") or snap.get("containers") else None)
         clients = {key: fetched[key] for key in app_info.LOGINS if key in fetched}
-        for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")):
+        for key, label in ARRS:
             if key in fetched:
                 run_check(f"{label} tags", tags.check_arr, key, label, fetched[key])
                 run_check(f"{label} library", library.check, key, label, fetched[key])
@@ -307,7 +311,7 @@ def run():
                 run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
                 run_check(f"{label} queue", downloads.check_archives, label, fetched[key].get("queue"), snap)
         run_check("shared categories", downloads.check_shared_categories,
-                  {key: (label, fetched[key]) for key, label in (("sonarr", "Sonarr"), ("radarr", "Radarr")) if key in fetched})
+                  {key: (label, fetched[key]) for key, label in ARRS if key in fetched})
         for key, client in clients.items():
             run_check(client["label"], downloads.check_client, key, client["label"], client["settings"], snap)
         if "prowlarr" in fetched:

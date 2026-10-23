@@ -11,7 +11,8 @@ import re
 from checks import PROBLEM, TIP, WARNING, finding, plural
 
 AREA = "tags"
-ITEMS = {"sonarr": ("seriesIds", "series", "series"), "radarr": ("movieIds", "film", "films")}
+ITEMS = {"sonarr": ("seriesIds", "series", "series"), "radarr": ("movieIds", "film", "films"),
+         "lidarr": ("artistIds", "artist", "artists")}
 THINGS = {
     "indexerIds": "indexer", "downloadClientIds": "download client", "delayProfileIds": "delay profile",
     "releaseProfileIds": "release profile", "restrictionIds": "release profile", "importListIds": "import list",

@@ -1,4 +1,4 @@
-"""Talking to Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex. The download clients are in clients.py."""
+"""Talking to Sonarr, Radarr, Lidarr, Prowlarr, Seerr, Jellyfin and Plex. The download clients are in clients.py."""
 
 import requests
 
@@ -13,6 +13,7 @@ class ServiceError(Exception):
 STATUS = {
     "sonarr": ("/api/v3/system/status", "X-Api-Key"),
     "radarr": ("/api/v3/system/status", "X-Api-Key"),
+    "lidarr": ("/api/v1/system/status", "X-Api-Key"),
     "prowlarr": ("/api/v1/system/status", "X-Api-Key"),
     "seerr": ("/api/v1/status", "X-Api-Key"),
     "bazarr": ("/api/system/status", "X-API-KEY"),
@@ -21,7 +22,7 @@ STATUS = {
 }
 
 # Where each app keeps its API
-API = {"sonarr": "/api/v3", "radarr": "/api/v3", "prowlarr": "/api/v1", "seerr": "/api/v1", "bazarr": "/api"}
+API = {"sonarr": "/api/v3", "radarr": "/api/v3", "lidarr": "/api/v1", "prowlarr": "/api/v1", "seerr": "/api/v1", "bazarr": "/api"}
 
 
 class Service:

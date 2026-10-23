@@ -14,6 +14,9 @@
 - **Download clients:** qBittorrent seeding limits that remove torrents before Sonarr or Radarr import them (and count
   as hit-and-run on private trackers), unfinished downloads on a different share from finished ones, and downloads
   stuck in Sonarr or Radarr's queue as RAR archives with no Unpackerr to extract them.
+- **Lidarr:** connect it under Settings. It gets the same library, download client, tag, health, security, profile and
+  backup checks as Sonarr and Radarr, except the TRaSH custom format ones. Readarr isn't included because it has been
+  retired by its developers.
 - **Seerr:** requests sent with a quality profile or root folder that Sonarr or Radarr no longer has, no default
   server for TV, films or 4K, servers it can't reach, and films added with Minimum Availability set to Announced.
   Shown under **Seerr** on the Dashboard.

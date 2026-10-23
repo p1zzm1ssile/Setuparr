@@ -1,4 +1,4 @@
-"""Sonarr and Radarr's own health, security, quality profiles and backups."""
+"""Sonarr, Radarr and Lidarr's own health, security, quality profiles and backups."""
 
 from checks import PROBLEM, TIP, WARNING, finding, plural, unraid
 
@@ -8,15 +8,19 @@ TRASH = {
                "formats": "https://trash-guides.info/Sonarr/sonarr-collection-of-custom-formats/"},
     "radarr": {"profiles": "https://trash-guides.info/Radarr/radarr-setup-quality-profiles/",
                "formats": "https://trash-guides.info/Radarr/Radarr-collection-of-custom-formats/"},
+    # TRaSH has no Lidarr guide
+    "lidarr": {"profiles": "https://wiki.servarr.com/lidarr/settings#quality-profiles",
+               "formats": "https://wiki.servarr.com/lidarr/settings#custom-formats"},
 }
 TRASH_PERMISSIONS = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Unraid/"
 SERVARR_AUTH = "https://wiki.servarr.com/sonarr/settings#security"
 SERVARR_MEDIA = {"sonarr": "https://wiki.servarr.com/sonarr/settings#file-management",
-                 "radarr": "https://wiki.servarr.com/radarr/settings#file-management"}
+                 "radarr": "https://wiki.servarr.com/radarr/settings#file-management",
+                 "lidarr": "https://wiki.servarr.com/lidarr/settings#file-management"}
 HEALTH_SEVERITY = {"error": PROBLEM, "warning": WARNING, "notice": TIP}
 # Health checks Setuparr already explains in more detail
 COVERED_HEALTH = {"RootFolderCheck"}
-ITEMS = {"sonarr": ("series", "series"), "radarr": ("film", "films")}
+ITEMS = {"sonarr": ("series", "series"), "radarr": ("film", "films"), "lidarr": ("artist", "artists")}
 
 
 def check(service, label, d, snapshot=None):
@@ -150,7 +154,9 @@ def check_profiles(service, label, d):
     findings = []
 
     # Sonarr v3 has no custom formats (None); v4 and Radarr with none imported return []
-    if formats == [] and d.get("items"):
+    # The custom format checks follow the TRaSH guides, which don't cover Lidarr
+    trash = service != "lidarr"
+    if trash and formats == [] and d.get("items"):
         findings.append(finding(
             "no-formats", AREA, TIP, label, f"{label} has no custom formats",
             f"Custom formats are how the TRaSH guide makes {label} prefer good releases (the right sources, HDR, "
@@ -176,7 +182,7 @@ def check_profiles(service, label, d):
                 steps=[f"In {label}, go to Settings > Profiles > {name} and lower Minimum Custom Format Score (the "
                        "TRaSH profiles mostly use 0), or score the custom formats you want."],
                 items=items, link=TRASH[service]["profiles"]))
-        if formats and scores and not any(scores):
+        if trash and formats and scores and not any(scores):
             findings.append(finding(
                 f"zero-scores|{p.get('id')}", AREA, WARNING, label, f"The {name} profile ignores your custom formats",
                 f"Every custom format scores 0 in this profile, so {label} picks releases for its {things} as if you "
