@@ -14,6 +14,9 @@
 - **Download clients:** qBittorrent seeding limits that remove torrents before Sonarr or Radarr import them (and count
   as hit-and-run on private trackers), unfinished downloads on a different share from finished ones, and downloads
   stuck in Sonarr or Radarr's queue as RAR archives with no Unpackerr to extract them.
+- **Health score:** the Dashboard shows a score out of 100 (minus 10 for each problem, 4 for each warning and 1 for
+  each tip; dismissed ones don't count), how it's changed over the last week, and a line of past scores. Each check
+  run is saved in `scores.json`, up to the last 365.
 - **Lidarr:** connect it under Settings. It gets the same library, download client, tag, health, security, profile and
   backup checks as Sonarr and Radarr, except the TRaSH custom format ones. Readarr isn't included because it has been
   retired by its developers.

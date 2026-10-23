@@ -152,6 +152,42 @@ function findingCard(f, reload) {
     el("div", { class: "card-actions" }, actions, result));
 }
 
+// The health score out of 100, how it's changed since the first check a week or more ago (or the first check of all),
+// and a line of the last checks' scores
+function scoreTile(now, history) {
+  const tone = now.score >= 80 ? "ok" : now.score >= 50 ? "warn" : "bad";
+  const weekAgo = Date.now() / 1000 - 7 * 86400;
+  const before = [...history].reverse().find((h) => h.at <= weekAgo) || history[0];
+  let trend = "";
+  if (before && history.length > 1) {
+    const change = now.score - before.score;
+    const since = before.at <= weekAgo ? `since ${new Date(before.at * 1000).toLocaleDateString()}` : "since the first check";
+    trend = change === 0 ? `No change ${since}` : `${change > 0 ? "Up" : "Down"} ${Math.abs(change)} ${since}`;
+  }
+  return el("div", { class: `tile ${tone}`, title: "100, minus 10 for each problem, 4 for each warning and 1 for each tip. Dismissed ones don't count." },
+    el("span", { class: "num", text: `${now.score}/100` }),
+    el("span", { class: "label", text: "Health score" }),
+    trend ? el("span", { class: "label small", text: trend }) : null,
+    history.length > 1 ? sparkline(history.map((h) => h.score)) : null);
+}
+
+function sparkline(values) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  const w = 140, h = 28;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("class", "sparkline");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("preserveAspectRatio", "none");
+  // Scaled to the scores' own range (at least 10 points), so small changes still show
+  const low = Math.min(...values), span = Math.max(10, Math.max(...values) - low);
+  const points = values.map((v, i) => `${(i * w / (values.length - 1)).toFixed(1)},${(h - 2 - (v - low) * (h - 4) / span).toFixed(1)}`);
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", points.join(" "));
+  svg.append(line);
+  return svg;
+}
+
 async function showDashboard() {
   const d = await api("/api/dashboard");
   const r = d.results;
@@ -193,6 +229,7 @@ async function showDashboard() {
     r.errors.length ? el("div", { class: "notice bad" }, el("strong", { text: "Some checks couldn't run" }),
       el("ul", {}, r.errors.map((e) => el("li", { text: e })))) : null,
     el("div", { class: "tiles" },
+      r.ran_at ? scoreTile(d.score, d.scores) : null,
       Object.entries(SEVERITY).map(([key, s]) => el("div", { class: `tile ${s.tile}` },
         el("span", { class: "num", text: String(active.filter((f) => f.severity === key).length) }),
         el("span", { class: "label", text: s.many })))),

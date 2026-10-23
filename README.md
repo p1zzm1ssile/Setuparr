@@ -154,6 +154,12 @@ with what each does, when to use it and an example.
 - Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
 - More **Fix it** buttons, including for download client settings, and anime checks for Radarr.
 
+### Health score
+
+The Dashboard shows a score out of 100: 10 off for each problem, 4 for each warning and 1 for each tip, not counting
+ones you've dismissed. It's saved after every check, so you can see whether your setup is getting better or worse over
+the last week.
+
 ## Giving Setuparr your Unraid settings
 
 Setuparr never looks around your server and doesn't need the Docker socket. It reads only the Unraid settings files

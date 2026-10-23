@@ -16,7 +16,7 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import PROBLEM, SEVERITY_ORDER, WARNING, anime, arr, bazarr, downloads, library, plural, seerr, tags, unraid
+from checks import PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, library, plural, seerr, tags, unraid
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -25,6 +25,10 @@ SNAPSHOT_FILE = os.path.join(config.config_dir, "unraid.json")
 FIXES_FILE = os.path.join(config.config_dir, "fixes.json")
 MODERATION_FILE = os.path.join(config.config_dir, "moderation.json")
 SCHEDULE_FILE = os.path.join(config.config_dir, "schedule.json")
+SCORES_FILE = os.path.join(config.config_dir, "scores.json")
+# A health score out of 100: each finding that isn't dismissed takes off this much
+SCORE_COST = {PROBLEM: 10, WARNING: 4, TIP: 1}
+MAX_SCORES = 365
 MODERATION_SECONDS = 24 * 3600
 # Dropped into the config folder from Unraid's terminal, imported, then deleted
 IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip", "unraid-config.tar")
@@ -325,13 +329,33 @@ def run():
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
         findings.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], f["area"], f["title"]))
-        _write(RESULTS_FILE, {"ran_at": time.time(), "findings": findings, "errors": errors,
+        ran_at = time.time()
+        _write(RESULTS_FILE, {"ran_at": ran_at, "findings": findings, "errors": errors,
                               "checked": {"unraid": bool(snap), **{k: k in fetched for k in fetchers}}})
+        record_score(ran_at, results()["findings"])
         logger.info(f"Checks finished: {len(findings)} found" + (f", {len(errors)} couldn't run" if errors else ""))
         return True
     finally:
         _running.clear()
         _lock.release()
+
+
+def score(findings):
+    """The health score now and the counts behind it. Dismissed findings don't count."""
+    active = [f for f in findings if not f.get("dismissed")]
+    counts = {s: sum(1 for f in active if f["severity"] == s) for s in SCORE_COST}
+    return {"score": max(0, 100 - sum(SCORE_COST[s] * n for s, n in counts.items())), **counts}
+
+
+def record_score(at, findings):
+    history = _read(SCORES_FILE, [])
+    history.append({"at": at, **score(findings)})
+    _write(SCORES_FILE, history[-MAX_SCORES:])
+
+
+def scores():
+    """Every run's health score, oldest first."""
+    return _read(SCORES_FILE, [])
 
 
 def run_in_background():

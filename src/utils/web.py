@@ -363,6 +363,8 @@ def dashboard():
         "planned": app_info.PLANNED,
         "results": runner.results(),
         "fixes": runner.fixes()[:20],
+        "score": runner.score(runner.results()["findings"]),
+        "scores": runner.scores()[-60:],
         "connections": [
             {"key": key, "label": label, "enabled": bool(getattr(config, f"{key}_enabled"))}
             for key, label, *_ in app_info.SERVICES
