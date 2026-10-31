@@ -73,6 +73,8 @@ From Sonarr and Radarr's download client settings:
 - Download clients reached at `localhost`, which inside a container is the container itself.
 - Download clients with no category, and Sonarr and Radarr sharing one category in the same client.
 - Deluge used with a category while its Label plugin is off.
+- Unpackerr not given an address for Sonarr, Radarr or Lidarr, not mapped to your downloads, or seeing a different
+  folder than they do at the same path (from its Unraid template).
 - Downloads stuck in the queue because they're RAR archives, with no Unpackerr to extract them (or Unpackerr not
   connected).
 
@@ -123,6 +125,24 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
 - No default server for TV, films or 4K, servers Seerr can't reach, and films added to be grabbed as soon as they're
   announced.
 
+### Prowlarr
+
+- Sonarr, Radarr or Lidarr missing from Prowlarr's apps, so they don't get its indexers.
+- Sync turned off, or set to Add and Remove Only so changes never reach the app.
+- Prowlarr or the app's address set to localhost, which inside a container is the container itself.
+- No indexers turned on, and indexers Prowlarr has paused after errors.
+- Prowlarr's own health messages, no login, and backups turned off.
+
+### Plex, Jellyfin and Emby
+
+- Hardware transcoding off when the container is given a GPU.
+- A transcode folder that isn't mapped, so transcodes fill Docker's own storage.
+- New downloads not noticed straight away (Plex's automatic scan or Jellyfin and Emby's real time monitoring off).
+- Plex on Docker's bridge network with no LAN Networks set, so home devices can count as remote, and Plex not backing
+  up its database.
+- Jellyfin and Emby: failed scheduled tasks, accounts (above all administrators) with no password, and a restart
+  waiting.
+
 ### Tags (Sonarr, Radarr, Lidarr, Prowlarr, Seerr)
 
 - Tags nothing uses (**Fix it** deletes them).
@@ -141,6 +161,17 @@ Connect Bazarr under **Settings** (its API key is in Settings > General > Securi
 - Indexers with no anime categories.
 - Seerr with no anime root folder or profile, so requested anime lands in your TV setup.
 
+### One-click TRaSH quality profiles
+
+The **Profiles** page lists the TRaSH guide's quality profiles for Sonarr and Radarr, in the guide's own groups
+(Standard, Anime, French, German, SQP). **Preview** shows exactly what would change: the profile to add (or the one with
+the same name to update), and each custom format with its score, marked as added, updated to TRaSH's version or
+already matching. **Import** then adds the custom formats and the profile. It uses the custom formats TRaSH turns on by
+default for that profile; optional groups, like HDR boosts or other countries' streaming services, are left for you to
+add. Nothing is deleted, scores you've given your own custom formats are kept, and each import can be undone under
+**Recent fixes** on the Dashboard. The guide's files are downloaded from GitHub at most once a day and kept in the
+config folder (`trash-sonarr.json`, `trash-radarr.json`); nothing about your setup is sent.
+
 ### Guides
 
 The **Guides** page explains the Extra Parameters you can give a container in Unraid's Advanced View: GPUs, memory and
@@ -149,7 +180,7 @@ with what each does, when to use it and an example.
 
 ### Coming next
 
-- TRaSH guide custom formats, quality profiles, sizes and naming, Prowlarr sync, Jellyfin and Plex settings.
+- Checking existing Sonarr and Radarr profiles against TRaSH, and TRaSH quality sizes and naming.
 - SABnzbd and NZBGet folders and categories.
 - Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
 - More **Fix it** buttons, including for download client settings, and anime checks for Radarr.
@@ -174,7 +205,8 @@ Docker's unused images and volumes take (`docker system df`).
 
 **Passwords, API keys and personal details are removed.** The files are read in memory, and only what the checks need
 is kept: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a
-GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; the few
+GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; for
+Unpackerr, which apps it's given an address for (only the names, never the addresses or API keys); the few
 Unraid settings the checks look at; each disk's slot (like disk1), state, size, free space, error count and temperature; each
 plugin's file name, the address it was installed from and the Unraid versions it's made for; Appdata Backup's
 schedule, destination and skipped containers; the names of your installed containers and appdata folders; and the size
@@ -275,7 +307,7 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 
 ## Free forever
 
-Every feature in Setuparr is free and always will be. There are no paid tiers, no Pro account, no subscriptions and no telemetry, and new features will be free too. Services Setuparr works with, like Sonarr, Radarr, Prowlarr, Seerr, Jellyfin and Plex, have their own terms.
+Every feature in Setuparr is free and always will be. There are no paid tiers, no Pro account, no subscriptions and no telemetry, and new features will be free too. Services Setuparr works with, like Sonarr, Radarr, Prowlarr, Seerr, Jellyfin, Emby and Plex, have their own terms.
 
 ## About the developer
 

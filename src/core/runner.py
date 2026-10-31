@@ -16,7 +16,9 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, library, plural, seerr, tags, unraid
+from checks import (PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, library, media, plural, prowlarr,
+                    seerr, tags, unraid)
+from services import trash
 from services.connections import ServiceError, connected
 from utils.logger import logger
 
@@ -246,8 +248,50 @@ def fetch_client(client):
 
 
 def fetch_prowlarr(p):
-    return {"tags": p.call("GET", "/tag/detail"), "indexers": p.call("GET", "/indexer"),
+    data = {"tags": p.call("GET", "/tag/detail"), "indexers": p.call("GET", "/indexer"),
             "proxies": p.call("GET", "/indexerproxy"), "apps": p.call("GET", "/applications")}
+    for key, path in (("status", "/indexerstatus"), ("health", "/health"), ("host", "/config/host")):
+        try:
+            data[key] = p.call("GET", path)
+        except ServiceError:
+            data[key] = None
+    return data
+
+
+def _optional(service, path, pick=None):
+    try:
+        found = service.call("GET", path)
+    except ServiceError:
+        return None
+    return pick(found) if pick and found is not None else found
+
+
+def fetch_jellyfin(s):
+    """Jellyfin or Emby: only the settings the checks use are kept."""
+    info = s.call("GET", "/System/Info") or {}
+    return {
+        "info": {k: info.get(k) for k in ("HasPendingRestart", "HasUpdateAvailable", "Version")},
+        "encoding": _optional(s, "/System/Configuration/encoding",
+                              lambda e: {k: e.get(k) for k in ("HardwareAccelerationType", "TranscodingTempPath")}),
+        "libraries": _optional(s, "/Library/VirtualFolders", lambda found: [
+            {"name": l.get("Name"), "monitor": (l.get("LibraryOptions") or {}).get("EnableRealtimeMonitor")}
+            for l in found or []]),
+        "tasks": _optional(s, "/ScheduledTasks", lambda found: [
+            {"name": t.get("Name"), "status": (t.get("LastExecutionResult") or {}).get("Status")} for t in found or []]),
+        "users": _optional(s, "/Users", lambda found: [
+            {"name": u.get("Name"), "password": u.get("HasPassword"),
+             "admin": (u.get("Policy") or {}).get("IsAdministrator")} for u in found or []]),
+    }
+
+
+PLEX_PREFS = ("HardwareAcceleratedCodecs", "TranscoderTempDirectory", "FSEventLibraryUpdatesEnabled", "LanNetworks",
+              "ButlerTaskBackupDatabase", "ScheduledLibraryUpdatesEnabled")
+
+
+def fetch_plex(s):
+    """Only the Plex settings the checks use."""
+    prefs = (s.call("GET", "/:/prefs") or {}).get("MediaContainer", {}).get("Setting") or []
+    return {"prefs": {p["id"]: p.get("value") for p in prefs if p.get("id") in PLEX_PREFS}}
 
 
 def fetch_seerr(s):
@@ -286,6 +330,7 @@ def run():
         fetched = {}
         fetchers = {**{key: (lambda s, key=key: fetch_arr(s, key)) for key, _ in ARRS},
                     "prowlarr": fetch_prowlarr, "seerr": fetch_seerr, "bazarr": fetch_bazarr,
+                    "jellyfin": fetch_jellyfin, "emby": fetch_jellyfin, "plex": fetch_plex,
                     **{key: fetch_client for key in app_info.LOGINS}}
         for key, fetch in fetchers.items():
             if key in services:
@@ -320,6 +365,11 @@ def run():
             run_check(client["label"], downloads.check_client, key, client["label"], client["settings"], snap)
         if "prowlarr" in fetched:
             run_check("Prowlarr tags", tags.check_prowlarr, fetched["prowlarr"])
+            run_check("Prowlarr", prowlarr.check, fetched["prowlarr"], snap,
+                      {key: label for key, label in ARRS if key in services})
+        for key in media.SERVERS:
+            if key in fetched:
+                run_check(media.SERVERS[key], media.check, key, fetched[key], snap)
         if "seerr" in fetched:
             run_check("Seerr tags", tags.check_seerr, fetched["seerr"])
             run_check("Seerr", seerr.check, fetched["seerr"])
@@ -405,13 +455,42 @@ def apply_fix(finding_id):
     else:
         raise ValueError("Unknown fix")
 
+    _remember(found["title"], message, undo)
+    return message
+
+
+def _remember(title, message, undo):
     history = _history()
-    history["fixes"].insert(0, {"id": f"{int(time.time() * 1000)}", "at": time.time(), "title": found["title"],
+    history["fixes"].insert(0, {"id": f"{int(time.time() * 1000)}", "at": time.time(), "title": title,
                                 "message": message, "undo": undo, "undone": False})
     history["fixes"] = history["fixes"][:200]
     _write(FIXES_FILE, history)
     logger.log("ACTION", message)
     run_in_background()
+
+
+# TRaSH quality profiles
+
+
+def trash_profiles(app):
+    """The TRaSH profiles that can be imported into app, and the names of the profiles it has now."""
+    profiles = trash.catalogue(trash.guide(app))
+    service = connected(config).get(app)
+    try:
+        have = [p.get("name") for p in service.call("GET", "/qualityprofile") or []] if service else []
+    except ServiceError:
+        have = []
+    return {"groups": profiles, "connected": bool(service), "have": have}
+
+
+def trash_preview(app, trash_id):
+    return trash.preview(app, _service(app), trash_id)
+
+
+def import_trash_profile(app, trash_id):
+    service = _service(app)
+    message, undo = trash.apply(app, service, trash_id)
+    _remember("Imported a TRaSH profile", message, {"action": "undo_trash_import", "params": undo})
     return message
 
 
@@ -432,6 +511,13 @@ def undo_fix(fix_id):
             series["seriesType"] = old
             service.call("PUT", f"/series/{series_id}", series)
         message = f"Put {len(params['types'])} series back to their old series type in Sonarr"
+    elif action == "undo_trash_import":
+        service = _service(params["app"])
+        trash.put_back(service, params)
+        profile = params.get("profile") or {}
+        name = profile.get("name") or (profile.get("previous") or {}).get("name") or "the profile"
+        message = (f"Removed \"{name}\" and the custom formats it added from {service.label}" if "created" in profile
+                   else f"Put \"{name}\" and its custom formats back as they were in {service.label}")
     else:
         raise ValueError("Unknown undo")
     entry["undone"] = True

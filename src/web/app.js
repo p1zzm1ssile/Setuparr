@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", prowlarr: "Prowlarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr", media: "Plex, Jellyfin & Emby" };
 let dashArea = "all";
 let showDismissed = false;
 
@@ -380,7 +380,7 @@ async function showUnraid(message) {
         } }))) : null,
     el("div", { class: "notice" },
       el("strong", { text: "Passwords, API keys and personal details are removed. " }),
-      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; ",
+      "Setuparr reads the files in memory and keeps only what the checks need: each container's name, image, folder mappings and host ports, its PUID, PGID and UMASK, whether it's given a GPU or its own IP address, which container's network it uses, and whether its time zone matches Unraid's; for Unpackerr, which apps it's given an address for (only the names, never the addresses or API keys); ",
       "the few Unraid settings it checks; each disk's slot, state, size, free space, error count and temperature; the names of your plugins, where they came from and the Unraid versions they're made for; Appdata Backup's schedule, destination and skipped containers; your Unraid version; the PCI IDs of your devices, which say what kind of GPU and network card you have; the names of your installed containers and of the folders in appdata; and how much space Docker's unused images and volumes take. ",
       "Everything else (passwords, API keys, VPN details, email settings, IP addresses, disk serial numbers, the server's name, other settings, network names and time zones) is dropped as the files are read and never saved. ",
       "Folder and container names are kept because the checks need them, so if one is named after a person, that name is kept too."),
@@ -826,6 +826,78 @@ function showGuides() {
       ])))));
 }
 
+// ---------- TRaSH profiles ----------
+
+const PROFILE_APPS = { sonarr: "Sonarr", radarr: "Radarr" };
+const FORMAT_ACTIONS = { add: "Added", update: "Updated to TRaSH's version", same: "Already matches" };
+
+async function showProfiles(app) {
+  if (!PROFILE_APPS[app]) app = "sonarr";
+  const label = PROFILE_APPS[app];
+  view.replaceChildren(el("h1", { text: "Profiles" }), el("p", { class: "muted", text: "Downloading the TRaSH guides…" }));
+  const d = await api(`/api/trash?app=${app}`);
+  const have = new Set((d.have || []).map((n) => String(n).toLowerCase()));
+
+  function profileCard(p) {
+    const result = el("span", { class: "result", role: "status" });
+    const details = el("div");
+    const previewButton = el("button", { type: "button", text: "Preview", disabled: !d.connected });
+    previewButton.addEventListener("click", async () => {
+      previewButton.disabled = true;
+      result.textContent = "";
+      try {
+        const v = await post("/api/trash/preview", { app, id: p.id });
+        const count = (a) => v.formats.filter((f) => f.action === a).length;
+        const importButton = el("button", { type: "button", class: "primary", text: v.profile === "update" ? `Update in ${label}` : `Import into ${label}` });
+        importButton.addEventListener("click", async () => {
+          if (!confirm(`${v.profile === "update" ? "Update" : "Add"} the profile "${v.name}" in ${label}, add ${count("add")} and update ${count("update")} custom formats? You can undo it on the Dashboard.`)) return;
+          importButton.disabled = true;
+          try {
+            flash(result, true, (await post("/api/trash/import", { app, id: p.id })).message);
+            if (!have.has(v.name.toLowerCase())) title.append(" ", el("span", { class: "badge info", text: `In ${label}` }));
+            have.add(v.name.toLowerCase());
+          } catch (e) {
+            flash(result, false, e.message);
+            importButton.disabled = false;
+          }
+        });
+        details.replaceChildren(
+          el("ul", {},
+            el("li", { text: v.profile === "update"
+              ? `Updates your profile "${v.name}" (${label} already has one with this name) to TRaSH's qualities and scores. Scores for your other custom formats are kept.`
+              : `Adds the quality profile "${v.name}".` }),
+            el("li", { text: `Custom formats: ${count("add")} added, ${count("update")} updated to TRaSH's version, ${count("same")} already match.` })),
+          el("details", {},
+            el("summary", { text: `The ${v.formats.length} custom formats and their scores` }),
+            el("ul", {}, v.formats.map((f) => el("li", { text: `${f.name}: ${f.score} (${FORMAT_ACTIONS[f.action]})` })))),
+          el("p", { class: "muted small", text: "Optional custom format groups (such as HDR boosts, anime release groups or streaming services for other countries) aren't added. Add them in the guide's order if you want them." }),
+          el("div", { class: "card-actions" }, importButton, result));
+      } catch (e) {
+        flash(result, false, e.message);
+      } finally {
+        previewButton.disabled = !d.connected;
+      }
+    });
+    const title = el("h2", {}, p.name, " ", have.has(p.name.toLowerCase()) ? el("span", { class: "badge info", text: `In ${label}` }) : null);
+    return el("div", { class: "panel" },
+      title,
+      p.description ? el("p", { class: "muted small", style: "white-space: pre-line", text: p.description }) : null,
+      details,
+      el("div", { class: "card-actions" },
+        previewButton,
+        p.url ? el("a", { href: p.url, target: "_blank", rel: "noopener noreferrer", text: "Read the guide" }) : null,
+        details.childElementCount ? null : result));
+  }
+
+  view.replaceChildren(
+    el("h1", { text: "Profiles" }),
+    el("p", { class: "muted", text: `Add a TRaSH guide quality profile, with its custom formats and scores, to ${label} in one go. Press Preview to see exactly what changes first. Nothing is deleted, and each import can be undone under Recent fixes on the Dashboard. The guides are downloaded from GitHub once a day; nothing about your setup is sent.` }),
+    el("div", { class: "chips" }, Object.entries(PROFILE_APPS).map(([key, name]) =>
+      el("a", { class: `button${key === app ? " primary" : ""}`, href: `#/profiles/${key}`, text: name }))),
+    ...(d.connected ? [] : [el("div", { class: "notice bad" }, `${label} isn't connected yet. `, el("a", { href: `#/settings/${app}`, text: `Connect ${label} in Settings` }), " to import profiles.")]),
+    ...d.groups.flatMap((g) => [el("h2", { text: g.name, style: "margin: 1.5rem 0 0.75rem" }), ...g.profiles.map(profileCard)]));
+}
+
 // ---------- Contact ----------
 
 function showContact() {
@@ -856,6 +928,7 @@ async function route() {
     else if (name === "settings") await showSettings(sub || "general");
     else if (name === "contact") showContact();
     else if (name === "guides") showGuides();
+    else if (name === "profiles") await showProfiles(sub);
     else if (name === "unraid") await showUnraid();
     else await showDashboard();
   } catch (e) {

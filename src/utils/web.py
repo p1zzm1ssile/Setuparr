@@ -169,6 +169,8 @@ class Handler(BaseHTTPRequestHandler):
                     "values": config.public_values(),
                     "username": auth.username(),
                 })
+            if path == "/api/trash":
+                return self.send(200, runner.trash_profiles(query.get("app", "")))
             if path == "/api/logs":
                 return self.send(200, read_logs(query.get("filter", "all")))
             if path == "/api/logs/download":
@@ -272,6 +274,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True, "message": runner.apply_fix(str(data.get("id", "")))})
             if path == "/api/undo":
                 return self.send(200, {"ok": True, "message": runner.undo_fix(str(data.get("id", "")))})
+            if path == "/api/trash/preview":
+                return self.send(200, runner.trash_preview(str(data.get("app", "")), str(data.get("id", ""))))
+            if path == "/api/trash/import":
+                return self.send(200, {"ok": True, "message": runner.import_trash_profile(str(data.get("app", "")),
+                                                                                        str(data.get("id", "")))})
             if path == "/api/dismiss":
                 runner.set_dismissed(str(data.get("id", "")), bool(data.get("dismissed")))
                 return self.send(200, {"ok": True})

@@ -186,6 +186,19 @@ def kept_variables(pairs):
     return {k: str(v) for k, v in pairs if k in KEPT_VARIABLES and v is not None}
 
 
+UNPACKERR_LINK = re.compile(r"^UN_(SONARR|RADARR|LIDARR|READARR|WHISPARR)_\d+_URL$")
+
+
+def unpackerr_links(name, image, pairs):
+    """For Unpackerr only: which apps it's given an address for (UN_SONARR_0_URL and so on), by name, never the
+    addresses or keys, and whether it's set up with variables at all (it can use a config file instead)."""
+    if "unpackerr" not in f"{image} {name}".lower():
+        return {}
+    pairs = [(str(k), v) for k, v in pairs]
+    apps = {APP_NAMES[m.group(1).lower()] for k, v in pairs if v and (m := UNPACKERR_LINK.match(k))}
+    return {"unpackerr": {"variables": any(k.startswith("UN_") and v for k, v in pairs), "apps": sorted(apps)}}
+
+
 def parse_template(name, data):
     """One Unraid Docker template -> a container, or None if it isn't one."""
     try:
@@ -228,6 +241,7 @@ def parse_template(name, data):
         "image": text("Repository"),
         "mounts": mounts,
         "variables": kept_variables(variables),
+        **unpackerr_links(container, text("Repository"), variables),
         "custom_network": network.lower() not in BUILT_IN_NETWORKS and not network.startswith("container:"),
         "network": kind,
         "network_of": network.split(":", 1)[1].strip() if kind == "container" else None,
@@ -320,6 +334,7 @@ def parse_compose(name, data):
             "image": str(spec.get("image", "")),
             "mounts": mounts,
             "variables": kept_variables(pairs),
+            **unpackerr_links(spec.get("container_name") or service, str(spec.get("image", "")), pairs),
             "custom_network": own_ip,
             "network": "own_ip" if own_ip and kind == "bridge" else kind,
             "network_of": mode.split(":", 1)[1].strip() if kind == "container" else None,
@@ -676,6 +691,7 @@ def check(snapshot, moderation=None):
     findings += check_disk_temps(snapshot.get("disks"))
     findings += check_server(settings, snapshot.get("plugins"))
     findings += check_ram_transcoding([c for c in containers if c["role"] == "server"])
+    findings += check_unpackerr(containers)
     return sent(snapshot, findings)
 
 
@@ -1458,6 +1474,55 @@ def check_ram_transcoding(servers):
                "Parameters. The transcode folder counts towards it.",
                "Or map /dev/shm instead of /tmp, which Unraid limits to half your RAM."],
         items=unlimited, link=GUIDE)]
+
+
+UNPACKERR_DOCS = "https://unpackerr.zip/docs/install/docker"
+
+
+def check_unpackerr(containers):
+    """Unpackerr not linked to the apps that are installed, or seeing the downloads somewhere other than they do."""
+    arrs = {c["app"]: c for c in containers if c["role"] == "arr" and c["app"] in ("Sonarr", "Radarr", "Lidarr")}
+    findings = []
+    for c in containers:
+        info = c.get("unpackerr")
+        if not info:
+            continue
+        if info["variables"]:
+            missing = sorted(a for a in arrs if a not in info["apps"])
+            if missing:
+                findings.append(finding(
+                    f"unpackerr-links|{c['name']}", "downloads", WARNING, "Unpackerr",
+                    f"Unpackerr doesn't extract downloads for {' or '.join(missing)}",
+                    f"{c['name']} has no address for {' or '.join(missing)}, so downloads that come as RAR archives stay "
+                    "in the queue and are never imported.",
+                    steps=[f"Edit {c['name']} and, for each app, add its address and API key, e.g. UN_SONARR_0_URL "
+                           "= http://192.168.1.10:8989 and UN_SONARR_0_API_KEY (UN_RADARR_0_URL and "
+                           "UN_RADARR_0_API_KEY for Radarr, UN_LIDARR_0_... for Lidarr)."],
+                    items=missing, link=UNPACKERR_DOCS))
+        linked = [arrs[a] for a in (info["apps"] if info["variables"] else arrs) if a in arrs]
+        if not c["data"]:
+            findings.append(finding(
+                f"unpackerr-no-data|{c['name']}", "downloads", PROBLEM, "Unpackerr", "Unpackerr can't see your downloads",
+                f"{c['name']} has no folder mapping for your downloads, so it can't find the archives to extract.",
+                steps=[f"Edit {c['name']} and map the same folder, to the same path, that your download client and "
+                       "Sonarr and Radarr use, e.g. /mnt/user/data to /data."],
+                link=UNPACKERR_DOCS))
+            continue
+        different = []
+        for arr in linked:
+            for m in arr["data"]:
+                for u in c["data"]:
+                    if u["container"] == m["container"] and u["host"] != m["host"]:
+                        different.append(f"{m['container']}: {arr['name']} → {m['host']}, {c['name']} → {u['host']}")
+        if different:
+            findings.append(finding(
+                f"unpackerr-paths|{c['name']}", "downloads", PROBLEM, "Unpackerr",
+                "Unpackerr sees a different folder than Sonarr and Radarr at the same path",
+                "Sonarr and Radarr tell Unpackerr where each download is, by their own path. Here the same path is a "
+                "different folder in Unpackerr, so it looks in the wrong place and nothing is extracted.",
+                steps=[f"Edit {c['name']} and map the same host folder to the same path as Sonarr and Radarr do."],
+                items=sorted(set(different)), link=UNPACKERR_DOCS))
+    return findings
 
 
 def size_text(n):

@@ -618,3 +618,29 @@ def test_hot_disks_and_transcoding_to_ram():
     plex = template("plex", "lscr.io/linuxserver/plex", [("/tmp", "/transcode"), ("/mnt/user/data/media", "/data/media")])
     _, findings = run_with(GOOD + HAVE_PLUGINS + [plex])
     assert "Transcodes in RAM have no size limit" in titles(findings)
+
+
+UNPACKERR = ("unpackerr", "golift/unpackerr")
+
+
+def test_unpackerr_keeps_only_which_apps_it_links_to():
+    files = GOOD + [template(*UNPACKERR, [("/mnt/user/data", "/data")],
+                             [("UN_SONARR_0_URL", "http://10.0.0.2:8989"), ("UN_SONARR_0_API_KEY", "secretkey"),
+                              ("UN_RADARR_0_URL", "")])]
+    snap, findings = run(files)
+    unpackerr = next(c for c in snap["containers"] if c["name"] == "unpackerr")
+    assert unpackerr["unpackerr"] == {"variables": True, "apps": ["Sonarr"]}
+    assert "secretkey" not in json.dumps(snap) and "10.0.0.2" not in json.dumps(snap)
+    assert titles(findings) == ["Unpackerr doesn't extract downloads for Radarr"]
+
+
+def test_unpackerr_with_a_config_file_and_no_downloads():
+    _, findings = run(GOOD + [template(*UNPACKERR, [("/mnt/user/appdata/unpackerr", "/config")])])
+    assert titles(findings) == ["Unpackerr can't see your downloads"]
+
+
+def test_unpackerr_seeing_another_folder_at_the_same_path():
+    files = GOOD + [template(*UNPACKERR, [("/mnt/user/downloads", "/data")],
+                             [("UN_SONARR_0_URL", "http://x:8989"), ("UN_RADARR_0_URL", "http://x:7878")])]
+    _, findings = run(files)
+    assert titles(findings)[-1] == "Unpackerr sees a different folder than Sonarr and Radarr at the same path"
