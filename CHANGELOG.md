@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0
+
+- **One-click TRaSH quality profiles:** the new **Profiles** page lists the TRaSH guide's profiles for Sonarr and
+  Radarr. **Preview** shows the profile and every custom format and score it would add or update; **Import** adds
+  them. Only the custom formats TRaSH turns on by default are added, nothing is deleted, scores you've given your own
+  custom formats are kept, and each import can be undone under **Recent fixes**. The guide's files are downloaded from
+  GitHub at most once a day.
+- **Prowlarr:** Sonarr, Radarr or Lidarr missing from its apps, sync turned off or set to Add and Remove Only,
+  localhost addresses, no indexers turned on, indexers paused after errors, and its own health, login and backups.
+  Shown under **Prowlarr** on the Dashboard.
+- **Plex, Jellyfin and Emby:** connect them under Settings (Emby is new). Hardware transcoding off when the container
+  has a GPU, transcodes written inside the container, new files not noticed straight away, Plex's LAN Networks and
+  database backups, and in Jellyfin and Emby failed scheduled tasks, accounts with no password and a pending restart.
+  Only the settings these checks use are read. Shown under **Plex, Jellyfin & Emby** on the Dashboard.
+- **Unpackerr:** not given an address for Sonarr, Radarr or Lidarr, no downloads folder mapped, or a different folder
+  than Sonarr and Radarr at the same path. From its Unraid template, only which apps it has an address for is kept,
+  never the addresses or API keys. **Get the command again** (or send the templates again) to get these checks.
+
 ## 0.7.0
 
 - **Cleanup:** appdata folders no installed container uses, templates Unraid keeps for containers you've removed, and

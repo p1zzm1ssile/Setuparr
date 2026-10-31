@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's own advice, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 
@@ -15,6 +15,7 @@ SERVICES = [
     ("seerr", "Seerr", 5055, 'Settings > General > API Key in Jellyseerr or Overseerr'),
     ("bazarr", "Bazarr", 6767, 'Settings > General > Security > API Key in Bazarr'),
     ("jellyfin", "Jellyfin", 8096, 'Dashboard > API Keys in Jellyfin'),
+    ("emby", "Emby", 8096, 'Settings > Advanced > API Keys in Emby'),
     ("plex", "Plex", 32400, 'Your Plex token. Plex\'s support article "Finding an authentication token" shows where to find it.'),
     ("qbittorrent", "qBittorrent", 8080, "The password for qBittorrent's web UI. Leave it empty if qBittorrent lets Setuparr in "
                                         "without one."),
@@ -34,8 +35,7 @@ def secret_key(service):
 # Shown on the Dashboard until each check is ready
 PLANNED = [
     {"title": "TRaSH guides", "items": [
-        "Custom formats, quality profiles, quality sizes and naming in Sonarr and Radarr.",
-        "Prowlarr's sync to your apps, Jellyfin and Plex settings.",
+        "Checking your existing Sonarr and Radarr profiles against TRaSH, and quality sizes and naming.",
         "SABnzbd and NZBGet folders and categories.",
         "Each difference with a Fix it button that shows the change before making it, or step-by-step instructions.",
     ]},

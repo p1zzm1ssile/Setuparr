@@ -1,4 +1,4 @@
-"""Talking to Sonarr, Radarr, Lidarr, Prowlarr, Seerr, Jellyfin and Plex. The download clients are in clients.py."""
+"""Talking to Sonarr, Radarr, Lidarr, Prowlarr, Seerr, Bazarr, Jellyfin, Emby and Plex. The download clients are in clients.py."""
 
 import requests
 
@@ -18,11 +18,12 @@ STATUS = {
     "seerr": ("/api/v1/status", "X-Api-Key"),
     "bazarr": ("/api/system/status", "X-API-KEY"),
     "jellyfin": ("/System/Info", "X-Emby-Token"),
+    "emby": ("/emby/System/Info", "X-Emby-Token"),
     "plex": ("/identity", "X-Plex-Token"),
 }
 
 # Where each app keeps its API
-API = {"sonarr": "/api/v3", "radarr": "/api/v3", "lidarr": "/api/v1", "prowlarr": "/api/v1", "seerr": "/api/v1", "bazarr": "/api"}
+API = {"sonarr": "/api/v3", "radarr": "/api/v3", "lidarr": "/api/v1", "prowlarr": "/api/v1", "seerr": "/api/v1", "bazarr": "/api", "emby": "/emby"}
 
 
 class Service:
@@ -66,7 +67,7 @@ class Service:
         data = self.get(STATUS[self.service][0])
         if self.service == "bazarr":
             return (data.get("data") or {}).get("bazarr_version", "")
-        if self.service == "jellyfin":
+        if self.service in ("jellyfin", "emby"):
             return data.get("Version", "")
         if self.service == "plex":
             return (data.get("MediaContainer") or {}).get("version", "")
