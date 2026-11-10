@@ -134,3 +134,17 @@ def test_the_nightly_script_reports_only_whats_new(server):
 def test_the_scheduled_key_needs_a_login(server):
     response, _ = request(server, "POST", "/api/unraid/schedule", {}, HEADER)
     assert response.status == 401
+
+
+def test_a_failed_upload_keeps_the_link_working(server):
+    cookie = login_cookie(server)
+    _, data = request(server, "POST", "/api/unraid/token", {}, {**HEADER, "Cookie": cookie})
+    token = json.loads(data)["token"]
+
+    status, _ = push(server, token, b"this isn't an archive")
+    assert status == 400
+    status, text = push(server, token, archive())
+    assert status == 200 and "read 1 containers" in text
+    # Once the files have been read, it's used up
+    status, _ = push(server, token, archive())
+    assert status == 403

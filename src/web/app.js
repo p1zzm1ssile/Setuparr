@@ -252,7 +252,8 @@ async function showDashboard() {
         const undo = el("button", { type: "button", text: fix.undone ? "Undone" : "Undo", disabled: fix.undone });
         undo.addEventListener("click", async () => {
           if (!confirm(`Undo "${fix.message}"?`)) return;
-          try { alert((await post("/api/undo", { id: fix.id })).message); reload(); } catch (e) { alert(e.message); }
+          undo.disabled = true;
+          try { alert((await post("/api/undo", { id: fix.id })).message); reload(); } catch (e) { alert(e.message); undo.disabled = false; }
         });
         return el("tr", {}, el("td", { class: "muted small", text: when(fix.at) }), el("td", { text: fix.message }), el("td", {}, undo));
       })))) : null,

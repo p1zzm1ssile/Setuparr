@@ -92,6 +92,11 @@ FIELDS = [
       env_str("LOCAL_NETWORKS", default="192.168.0.0/16, 10.0.0.0/8"), section="Login",
       help="Addresses that skip the login, separated by commas. 172.16.0.0/12 isn't included by default because Docker uses it, "
            "and traffic forwarded by Docker can appear to come from there."),
+    F("trusted_proxies", "general", "My reverse proxies", "labels",
+      env_str("TRUSTED_PROXIES", default=""), section="Login",
+      help="Only if you use a reverse proxy anyway: its address, like 192.168.1.10, separated by commas. Setuparr then "
+           "counts wrong passwords for the visitor's own address, which the proxy passes on, rather than locking "
+           "everyone out together. Leave it empty otherwise: an address listed here can claim to be anyone."),
 
     *[
         field
@@ -173,7 +178,7 @@ def coerce(field, value):
             raise ValueError("isn't a valid address")
         if not value.lower().startswith(("http://", "https://")):
             raise ValueError("must start with http:// or https://")
-    if field["key"] == "local_networks":
+    if field["key"] in ("local_networks", "trusted_proxies"):
         for item in split_labels(value):
             try:
                 ipaddress.ip_network(item, strict=False)
@@ -202,6 +207,7 @@ def resolve(raw):
     for service, *_ in app_info.SERVICES:
         resolved[f"{service}_url"] = raw[f"{service}_url"].rstrip("/")
     resolved["local_networks"] = parse_networks(raw["local_networks"])
+    resolved["trusted_proxies"] = parse_networks(raw["trusted_proxies"])
     return resolved
 
 

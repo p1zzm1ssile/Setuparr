@@ -37,6 +37,12 @@ IMPORT_NAMES = ("unraid-config.tar.gz", "unraid-config.tgz", "unraid-config.zip"
 
 _lock = threading.Lock()
 _running = threading.Event()
+# One fix, import or undo at a time, so a double click can't carry one out twice
+_fix_lock = threading.Lock()
+# fixes.json is changed from several web requests at once: read, change and write it under this
+_history_lock = threading.RLock()
+# When each finding was last fixed, so a check run that started before the fix doesn't offer it again
+_fixed_at = {}
 
 
 def _read(path, default):
@@ -131,12 +137,18 @@ def new_push_token():
 
 
 def use_push_token(token):
-    """True once for a valid token, which then stops working."""
+    """A valid token's expiry time, once: the token then stops working. 0 if it isn't valid. If what was sent with it
+    couldn't be read, give_back_push_token makes it work again, so a failed upload doesn't need a new link."""
     for known, expires in list(_push_tokens.items()):
         if hmac.compare_digest(known, token or "") and expires >= time.time():
             _push_tokens.pop(known, None)
-            return True
-    return False
+            return expires
+    return 0
+
+
+def give_back_push_token(token, expires):
+    if expires >= time.time():
+        _push_tokens[token] = expires
 
 
 # A key for a script on Unraid that sends the files on a schedule and shows new problems as an Unraid notification.
@@ -324,6 +336,7 @@ def run():
     if not _lock.acquire(blocking=False):
         return False
     _running.set()
+    started = time.time()
     try:
         findings, errors = [], []
         services = connected(config)
@@ -379,6 +392,12 @@ def run():
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
         findings.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], f["area"], f["title"]))
+        with _fix_lock:
+            for f in findings:
+                if f.get("fix") and _fixed_at.get(f["id"], 0) >= started:
+                    f["fix"] = None
+            for finding_id in [k for k, at in _fixed_at.items() if at < started]:
+                _fixed_at.pop(finding_id, None)
         ran_at = time.time()
         _write(RESULTS_FILE, {"ran_at": ran_at, "findings": findings, "errors": errors,
                               "checked": {"unraid": bool(snap), **{k: k in fetched for k in fetchers}}})
@@ -427,6 +446,21 @@ def _service(key):
 
 
 def apply_fix(finding_id):
+    with _fix_lock:
+        message = _apply_fix(finding_id)
+        _fixed_at[finding_id] = time.time()
+        # Take the button away straight away, rather than when the checks have run again
+        data = _read(RESULTS_FILE, None)
+        if data:
+            for f in data.get("findings", []):
+                if f["id"] == finding_id:
+                    f["fix"] = None
+            _write(RESULTS_FILE, data)
+    run_in_background()
+    return message
+
+
+def _apply_fix(finding_id):
     found = next((f for f in _read(RESULTS_FILE, {}).get("findings", []) if f["id"] == finding_id), None)
     if not found or not found.get("fix"):
         raise ValueError("That fix isn't available any more. Run the checks again")
@@ -460,13 +494,13 @@ def apply_fix(finding_id):
 
 
 def _remember(title, message, undo):
-    history = _history()
-    history["fixes"].insert(0, {"id": f"{int(time.time() * 1000)}", "at": time.time(), "title": title,
-                                "message": message, "undo": undo, "undone": False})
-    history["fixes"] = history["fixes"][:200]
-    _write(FIXES_FILE, history)
+    with _history_lock:
+        history = _history()
+        history["fixes"].insert(0, {"id": f"{time.time_ns() // 1000}", "at": time.time(), "title": title,
+                                    "message": message, "undo": undo, "undone": False})
+        history["fixes"] = history["fixes"][:200]
+        _write(FIXES_FILE, history)
     logger.log("ACTION", message)
-    run_in_background()
 
 
 # TRaSH quality profiles
@@ -488,13 +522,23 @@ def trash_preview(app, trash_id):
 
 
 def import_trash_profile(app, trash_id):
-    service = _service(app)
-    message, undo = trash.apply(app, service, trash_id)
-    _remember("Imported a TRaSH profile", message, {"action": "undo_trash_import", "params": undo})
+    with _fix_lock:
+        service = _service(app)
+        message, undo = trash.apply(app, service, trash_id)
+        _remember("Imported a TRaSH profile", message, {"action": "undo_trash_import", "params": undo})
+    run_in_background()
     return message
 
 
 def undo_fix(fix_id):
+    with _fix_lock:
+        message = _undo_fix(fix_id)
+    logger.log("ACTION", f"Undo: {message}")
+    run_in_background()
+    return message
+
+
+def _undo_fix(fix_id):
     history = _history()
     entry = next((f for f in history["fixes"] if f["id"] == fix_id), None)
     if not entry or entry["undone"]:
@@ -520,10 +564,13 @@ def undo_fix(fix_id):
                    else f"Put \"{name}\" and its custom formats back as they were in {service.label}")
     else:
         raise ValueError("Unknown undo")
-    entry["undone"] = True
-    _write(FIXES_FILE, history)
-    logger.log("ACTION", f"Undo: {message}")
-    run_in_background()
+    # Read it again: a Dismiss may have changed it while the undo ran
+    with _history_lock:
+        history = _history()
+        for f in history["fixes"]:
+            if f["id"] == fix_id:
+                f["undone"] = True
+        _write(FIXES_FILE, history)
     return message
 
 
@@ -532,8 +579,9 @@ def fixes():
 
 
 def set_dismissed(finding_id, dismissed):
-    history = _history()
-    ids = set(history.get("dismissed", []))
-    (ids.add if dismissed else ids.discard)(finding_id)
-    history["dismissed"] = sorted(ids)
-    _write(FIXES_FILE, history)
+    with _history_lock:
+        history = _history()
+        ids = set(history.get("dismissed", []))
+        (ids.add if dismissed else ids.discard)(finding_id)
+        history["dismissed"] = sorted(ids)
+        _write(FIXES_FILE, history)

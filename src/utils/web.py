@@ -54,7 +54,8 @@ class Handler(BaseHTTPRequestHandler):
 
     @property
     def ip(self):
-        return self.client_address[0]
+        """The visitor's address: passed on by a trusted reverse proxy, or the address the request came from."""
+        return auth.client_ip(self.client_address[0], self.headers)
 
     def token(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -91,7 +92,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, f.read(), "text/html; charset=utf-8")
 
     def body(self, limit=1_000_000):
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ValueError("Invalid Content-Length")
+        if length < 0:
+            raise ValueError("Invalid Content-Length")
         if length > limit:
             raise ValueError("Request too large")
         try:
@@ -330,21 +336,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send(code, message + "\n", "text/plain; charset=utf-8")
 
         scheduled = bool(key) and runner.use_schedule_key(key)
-        if not scheduled and not runner.use_push_token(token):
+        expires = 0 if scheduled else runner.use_push_token(token)
+        if not scheduled and not expires:
             logger.warning(f"Unraid files sent with a wrong or used link from {self.ip}")
             if key:
                 return text(403, "Setuparr: the scheduled scan key isn't right. Copy the script from the Unraid page again.")
             return text(403, "Setuparr: that link has been used or has run out. Get a new one on the Unraid page.")
-        length = int(self.headers.get("Content-Length") or 0)
+
+        def failed(code, message):
+            # The link only counts as used once the files have been read, so a failed try can be run again
+            if expires:
+                runner.give_back_push_token(token, expires)
+            return text(code, message)
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
         if not 0 < length <= 50_000_000:
-            return text(400, "Setuparr: nothing was sent, or it's more than 50 MB.")
+            return failed(400, "Setuparr: nothing was sent, or it's more than 50 MB.")
         try:
             # Read in memory and never written to disk
             host = {k: self.headers.get(f"X-{k.capitalize()}") for k in ("containers", "appdata", "docker")}
             summary = runner.import_files([("unraid.tar.gz", self.rfile.read(length))],
                                           self.headers.get("X-Hardware"), self.headers.get("X-Unraid-Version"), host)
         except (UploadError, ValueError) as e:
-            return text(400, f"Setuparr: {e}")
+            return failed(400, f"Setuparr: {e}")
         if scheduled:
             try:
                 report = runner.scan_and_report()

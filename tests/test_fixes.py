@@ -97,3 +97,50 @@ def test_health_score_is_recorded_after_each_run():
     before = len(runner.scores())
     runner.run()
     assert len(runner.scores()) == before + 1 and runner.scores()[-1]["score"] <= 100
+
+
+def test_a_fix_is_only_carried_out_once(sonarr):
+    store([delete_finding(1)])
+    runner.apply_fix("del1")
+    # A double click, or a second tab: the button is gone and the tag isn't looked for again
+    with pytest.raises(ValueError, match="isn't available"):
+        runner.apply_fix("del1")
+    assert len([f for f in runner.fixes() if f["title"] == "unused" and not f["undone"]]) >= 1
+
+
+def test_a_check_run_that_started_before_a_fix_does_not_offer_it_again(monkeypatch):
+    from checks import finding
+    stale = finding("x", "sonarr", "tip", "Sonarr", "unused", "", fix={"action": "delete_tag", "params": {}})
+
+    def fixed_while_checking(arrs):
+        runner._fixed_at[stale["id"]] = runner.time.time()  # Fix it pressed while this run was reading the apps
+        return [dict(stale)]
+    monkeypatch.setattr(runner, "connected", lambda cfg: {})
+    monkeypatch.setattr(runner, "snapshot", lambda: None)
+    monkeypatch.setattr(runner.downloads, "check_shared_categories", fixed_while_checking)
+    assert runner.run()
+    found = next(f for f in runner.results()["findings"] if f["id"] == stale["id"])
+    assert found["fix"] is None
+
+    # The next run started after the fix, so if the problem is back, so is the button
+    monkeypatch.setattr(runner.downloads, "check_shared_categories", lambda arrs: [dict(stale)])
+    assert runner.run()
+    assert next(f for f in runner.results()["findings"] if f["id"] == stale["id"])["fix"]
+    assert not runner._fixed_at
+
+
+def test_dismissing_while_an_undo_runs_is_not_lost(sonarr):
+    store([delete_finding(1)])
+    runner.apply_fix("del1")
+    fix_id = runner.fixes()[0]["id"]
+    real_call = sonarr.call
+
+    def dismiss_during(method, path, body=None):
+        if method == "POST":
+            runner.set_dismissed("something-else", True)
+        return real_call(method, path, body)
+    sonarr.call = dismiss_during
+    runner.undo_fix(fix_id)
+    assert "something-else" in runner._history()["dismissed"]
+    assert runner.fixes()[0]["undone"]
+    runner.set_dismissed("something-else", False)

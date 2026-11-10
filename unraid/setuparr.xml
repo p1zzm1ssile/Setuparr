@@ -16,4 +16,7 @@
   <ExtraParams/>
   <Config Name="Web UI port" Target="9893" Default="9893" Mode="tcp" Description="Port for the Setuparr web UI" Type="Port" Display="always" Required="true" Mask="false">9893</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/setuparr" Mode="rw" Description="Settings, login and logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/setuparr</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user Setuparr runs as. 99 is Unraid's nobody" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group Setuparr runs as. 100 is Unraid's users" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="022" Mode="" Description="Permissions for new files in the config folder" Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
 </Container>
