@@ -36,7 +36,7 @@ jobs:
         id: version
         run: echo "version=$(awk -F\" '/^VERSION/ {print $2}' src/app_info.py | head -n1)" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build image
         uses: docker/build-push-action@v6
