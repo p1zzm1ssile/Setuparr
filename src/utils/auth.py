@@ -17,6 +17,9 @@ import time
 import utils.config as config
 
 AUTH_FILE = os.path.join(config.config_dir, "auth.json")
+# Logins are kept here so a restart or an update doesn't sign everyone out. Only a hash of each session token is
+# saved, so the file can't be used to log in.
+SESSIONS_FILE = os.path.join(config.config_dir, "sessions.json")
 SESSION_SECONDS = 7 * 24 * 3600
 MAX_FAILURES = 5
 LOCKOUT_SECONDS = 5 * 60
@@ -37,7 +40,7 @@ PASSWORD_RULES = [
 ]
 
 _lock = threading.Lock()
-_sessions = {}  # token -> (username, expires)
+_sessions = None  # sha256 of token -> (username, expires), loaded from SESSIONS_FILE when first needed
 _failures = {}  # ip -> (count, last_failure, locked_until)
 _account = None  # cached contents of auth.json
 _account_loaded = False
@@ -69,13 +72,45 @@ def _load():
     return _account
 
 
-def _save(data):
+def _write_private(path, data):
     os.makedirs(config.config_dir, exist_ok=True)
-    tmp = AUTH_FILE + ".tmp"
+    tmp = path + ".tmp"
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(data, f)
     os.chmod(tmp, 0o600)  # in case an older version left it behind
-    os.replace(tmp, AUTH_FILE)
+    os.replace(tmp, path)
+
+
+def _token_key(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _session_table():
+    """The sessions, read from disk the first time. Call with _lock held."""
+    global _sessions
+    if _sessions is None:
+        try:
+            with open(SESSIONS_FILE) as f:
+                saved = json.load(f)
+            now = time.time()
+            _sessions = {k: (v[0], float(v[1])) for k, v in saved.items() if float(v[1]) > now}
+        except (OSError, ValueError, TypeError, IndexError, AttributeError):
+            _sessions = {}
+    return _sessions
+
+
+def _save_sessions():
+    """Call with _lock held. A failed write only means logins don't survive a restart."""
+    now = time.time()
+    table = {k: v for k, v in _session_table().items() if v[1] > now}
+    try:
+        _write_private(SESSIONS_FILE, {k: list(v) for k, v in table.items()})
+    except OSError:
+        pass
+
+
+def _save(data):
+    _write_private(AUTH_FILE, data)
     global _account, _account_loaded
     _account, _account_loaded = data, True
 
@@ -99,7 +134,8 @@ def set_password(user: str, password: str):
     salt = secrets.token_bytes(16)
     _save({"username": user, "salt": salt.hex(), "hash": _hash(password, salt).hex()})
     with _lock:
-        _sessions.clear()  # sign everyone out after a password change
+        _session_table().clear()  # sign everyone out after a password change
+        _save_sessions()
 
 
 def check_password(user: str, password: str) -> bool:
@@ -145,27 +181,32 @@ def login(ip: str, user: str, password: str):
     with _lock:
         _failures.pop(ip, None)
         token = secrets.token_urlsafe(32)
-        _sessions[token] = (username(), time.time() + SESSION_SECONDS)
+        _session_table()[_token_key(token)] = (username(), time.time() + SESSION_SECONDS)
+        _save_sessions()
         return token
 
 
 def session_user(token: str):
-    if not token:
+    # No account (auth.json deleted to reset a forgotten password): saved logins don't count either
+    if not token or not has_account():
         return None
     with _lock:
-        entry = _sessions.get(token)
+        key = _token_key(token)
+        entry = _session_table().get(key)
         if entry is None:
             return None
         user, expires = entry
         if expires < time.time():
-            _sessions.pop(token, None)
+            _session_table().pop(key, None)
+            _save_sessions()
             return None
         return user
 
 
 def logout(token: str):
     with _lock:
-        _sessions.pop(token, None)
+        if _session_table().pop(_token_key(token or ""), None):
+            _save_sessions()
 
 
 def is_proxied(headers) -> bool:
@@ -180,6 +221,28 @@ def _address(ip: str):
     if address.version == 6 and address.ipv4_mapped:
         address = address.ipv4_mapped
     return address
+
+
+def _trusted(address) -> bool:
+    return address is not None and any(address in net for net in config.trusted_proxies)
+
+
+def client_ip(peer: str, headers) -> str:
+    """The address to count wrong passwords against and to log. Behind a reverse proxy listed in the settings, the
+    visitor's own address that the proxy passes on; otherwise the address the request came from. Forwarding headers
+    from anywhere else are ignored, since a visitor can write anything in them."""
+    if not _trusted(_address(peer)):
+        return peer
+    forwarded = [part.strip() for part in (headers.get("X-Forwarded-For") or "").split(",") if part.strip()]
+    # The proxy adds the address it saw at the end, so read from the end and skip any proxies in front of it
+    for candidate in reversed(forwarded):
+        address = _address(candidate)
+        if address is None:
+            break
+        if not _trusted(address):
+            return str(address)
+    address = _address((headers.get("X-Real-IP") or "").strip())
+    return str(address) if address is not None and not _trusted(address) else peer
 
 
 def lan_bypass(ip: str, headers) -> bool:

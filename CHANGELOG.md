@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.1
+
+- **No longer runs as root:** Setuparr now runs as **PUID** and **PGID** (99 and 100, Unraid's `nobody:users`, unless
+  you set them) with **UMASK**, like your other containers. On start it hands its config folder to that user, so files
+  written by older versions as root are taken care of. The Unraid template has the three new variables under
+  **Show more settings**.
+- **Locked out by someone else behind a reverse proxy:** wrong passwords were counted per address, and behind a proxy
+  everyone shares the proxy's. List your proxy under **My reverse proxies** (Settings > General) and each visitor is
+  counted on their own. Forwarding headers from anywhere else are still ignored.
+- **Logins survive restarts and updates.** Only a hash of each login is saved, in `sessions.json`. Deleting `auth.json`
+  to reset a forgotten password signs everyone out too.
+- **Fix it and Undo can't run twice:** a double click, or a second tab, used to be able to carry out a fix or an undo
+  again. The Fix it button now goes as soon as the fix is made, and a Dismiss made while a fix or undo is running is
+  no longer lost.
+- **A failed upload from Unraid's terminal keeps its link,** so you can run the same command again instead of getting
+  a new one.
+- **Builds are repeatable:** the base image and Python packages are pinned to versions, with Dependabot proposing
+  updates each week, and a published version's image is never replaced: merging without bumping the version only
+  updates `latest`.
+
 ## 0.8.0
 
 - **One-click TRaSH quality profiles:** the new **Profiles** page lists the TRaSH guide's profiles for Sonarr and

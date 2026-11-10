@@ -53,6 +53,10 @@ jobs:
           curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://localhost:9893/ | tee /tmp/root
           grep -q "302 http://localhost:9893/setup" /tmp/root
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9893/api/settings)" = "401"
+          # It runs as PUID:PGID (99:100 by default), not root, and so do the files it writes
+          test "$(docker exec smoke sh -c 'stat -c %u:%g /proc/1')" = "99:100"
+          test "$(docker exec smoke stat -c %u:%g /config/settings.json)" = "99:100"
+          docker exec smoke /entrypoint.sh python3 healthcheck.py
           docker logs smoke
           docker rm -f smoke
 
@@ -63,15 +67,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A released version's image is never replaced: bump VERSION in src/app_info.py to publish a new one.
+      # Until then, main only updates :latest and its own sha- tag.
+      - name: Is this version already published?
+        id: published
+        if: github.event_name != 'pull_request'
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "tags=$IMAGE:latest,$IMAGE:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:${{ steps.version.outputs.version }} already exists, so only :latest is updated. Bump VERSION to release a new one."
+          else
+            echo "tags=$IMAGE:latest,$IMAGE:${{ steps.version.outputs.version }},$IMAGE:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish image
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+          tags: ${{ steps.published.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}

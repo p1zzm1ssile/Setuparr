@@ -254,6 +254,7 @@ Unraid page offers to read it and delete it, or just delete it.
 ```bash
 docker run -d --name setuparr \
   -p 9893:9893 \
+  -e PUID=99 -e PGID=100 -e UMASK=022 \
   -v /path/to/appdata/setuparr:/config \
   ghcr.io/p1zzm1ssile/setuparr:latest
 ```
@@ -267,10 +268,18 @@ services:
     container_name: setuparr
     ports:
       - 9893:9893
+    environment:
+      - PUID=99
+      - PGID=100
+      - UMASK=022
     volumes:
       - ./setuparr:/config
     restart: unless-stopped
 ```
+
+Setuparr runs as **PUID** and **PGID** (Unraid's `nobody:users`, 99 and 100, unless you set them) with **UMASK**, never
+as root. On start it gives its config folder to that user if anything in it belongs to someone else, so updating from
+0.8.0 or earlier, which ran as root, needs nothing from you.
 
 Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl` for the environment variables.
 
@@ -290,11 +299,15 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 > it remotely, use a VPN such as WireGuard or Tailscale.
 
 - The password is stored as a scrypt hash in `/config/auth.json`, never in plain text.
-- After 5 wrong passwords, that address is locked out for 5 minutes.
+- After 5 wrong passwords, that address is locked out for 5 minutes. Behind a reverse proxy every visitor seems to come
+  from the proxy's address, so one person could lock everyone out: if you use one anyway, list it under **My reverse
+  proxies** (Settings > General) and wrong passwords are counted for each visitor's own address instead.
+- Logins last 7 days and survive restarts and updates. Only a hash of each login is saved, in `/config/sessions.json`,
+  and changing your password signs everyone out.
 - **Skip login on my local network** (Settings > General) lets devices on the networks you list in without a password.
   It never applies to requests that arrive through a reverse proxy.
 - Changing an app's address needs its API key entered again, so a saved key can't be sent somewhere new.
-- Saved API keys and passwords are never sent back to the browser, and `settings.json` and `auth.json` are only readable by the
+- Saved API keys and passwords are never sent back to the browser, and `settings.json`, `auth.json` and `sessions.json` are only readable by the
   account Setuparr runs as.
 - **Forgotten your password?** Delete `auth.json` from the config folder and restart Setuparr. It will ask you to create
   a login again, with a new setup code in the log. Your settings are kept.
@@ -302,7 +315,7 @@ Every setting is in the web UI. To pre-fill them on first start, see `.env.tmpl`
 ## Health check
 
 - **HTTP:** `GET /health` returns the status as JSON, with HTTP 200 when healthy and 503 when not.
-- **Command line:** `docker exec setuparr python healthcheck.py` exits with 0 when healthy, 1 when not.
+- **Command line:** `docker exec setuparr /entrypoint.sh python3 healthcheck.py` exits with 0 when healthy, 1 when not.
 - **Docker:** the image includes a `HEALTHCHECK`, so `docker ps` shows `healthy` or `unhealthy`.
 
 ## Free forever

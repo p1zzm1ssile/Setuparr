@@ -1,6 +1,7 @@
 """Check whether Setuparr is working. Exits 0 when healthy, 1 when not.
 
-Run it inside the container with: docker exec setuparr python healthcheck.py
+Run it inside the container with: docker exec setuparr /entrypoint.sh python3 healthcheck.py
+(through the entrypoint, so it runs as PUID:PGID like Setuparr and never leaves root-owned files in /config)
 """
 
 import sys
