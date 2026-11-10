@@ -16,8 +16,8 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import (PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, library, media, plural, prowlarr,
-                    seerr, tags, unraid)
+from checks import (PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, drift, library, media, plural,
+                    prowlarr, seerr, tags, unraid)
 from services import trash
 from services.connections import ServiceError, connected
 from utils.logger import logger
@@ -247,7 +247,7 @@ def fetch_arr(arr, kind):
     # Only some checks need these, and Sonarr v3 has no custom formats
     for key, path in (("media", "/config/mediamanagement"), ("handling", "/config/downloadclient"),
                       ("formats", "/customformat"), ("health", "/health"), ("host", "/config/host"),
-                      ("queue", "/queue?pageSize=250")):
+                      ("queue", "/queue?pageSize=250"), ("definitions", "/qualitydefinition")):
         try:
             data[key] = arr.call("GET", path)
         except ServiceError:
@@ -331,6 +331,15 @@ def fetch_bazarr(b):
     return data
 
 
+def trash_guide(app):
+    """TRaSH's files for app, or None if they've never been downloaded and can't be now."""
+    try:
+        return trash.guide(app)
+    except trash.TrashError as e:
+        logger.warning(f"Skipped comparing {trash.APPS[app]} with the TRaSH guides | {e}")
+        return None
+
+
 def run():
     """Run every check that has what it needs. Safe to call from several threads."""
     if not _lock.acquire(blocking=False):
@@ -388,6 +397,11 @@ def run():
             run_check("Seerr", seerr.check, fetched["seerr"])
         if "bazarr" in fetched:
             run_check("Bazarr", bazarr.check, fetched["bazarr"], snap, [k for k in ("sonarr", "radarr") if k in services])
+        servers = [key for key in ("plex", "jellyfin", "emby") if key in services]
+        for key in trash.APPS:
+            if key in fetched:
+                run_check(f"{trash.APPS[key]} against TRaSH", drift.check, key, trash.APPS[key], fetched[key],
+                          trash_guide(key), servers)
         if "sonarr" in fetched:
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
@@ -486,6 +500,35 @@ def _apply_fix(finding_id):
             service.call("PUT", f"/series/{series_id}", series)
         undo = {"action": "restore_series_type", "params": {"types": before}}
         message = f"Set {len(before)} series to {params['type'].capitalize()} in Sonarr"
+
+    elif action == "trash_import":
+        service = _service(params["app"])
+        message, undo_params = trash.apply(params["app"], service, params["trash_id"])
+        undo = {"action": "undo_trash_import", "params": undo_params}
+
+    elif action == "set_quality_sizes":
+        service = _service(params["service"])
+        ref = drift.size_reference(params["service"], trash.guide(params["service"]))
+        if not ref:
+            raise ValueError("TRaSH's quality sizes couldn't be found. Run the checks again")
+        before = service.call("GET", "/qualitydefinition")
+        wanted = {q["quality"]: q for q in ref.get("qualities") or []}
+        changed, after = 0, []
+        for d in before:
+            q = wanted.get((d.get("quality") or {}).get("name"))
+            new = dict(d)
+            if q:
+                for key, field, _ in drift.SIZE_FIELDS:
+                    # An empty (unlimited) value is left as it is, as the check doesn't count it
+                    if new.get(field) is not None and q.get(key) is not None and new[field] != q[key]:
+                        new[field] = q[key]
+            changed += new != d
+            after.append(new)
+        if not changed:
+            raise ValueError(f"{service.label}'s quality sizes already match TRaSH's. Run the checks again")
+        service.call("PUT", "/qualitydefinition/update", after)
+        undo = {"action": "restore_quality_sizes", "params": {"service": params["service"], "definitions": before}}
+        message = f"Set {changed} quality size{'s' if changed != 1 else ''} in {service.label} to TRaSH's"
     else:
         raise ValueError("Unknown fix")
 
@@ -555,6 +598,10 @@ def _undo_fix(fix_id):
             series["seriesType"] = old
             service.call("PUT", f"/series/{series_id}", series)
         message = f"Put {len(params['types'])} series back to their old series type in Sonarr"
+    elif action == "restore_quality_sizes":
+        service = _service(params["service"])
+        service.call("PUT", "/qualitydefinition/update", params["definitions"])
+        message = f"Put the quality sizes in {service.label} back as they were"
     elif action == "undo_trash_import":
         service = _service(params["app"])
         trash.put_back(service, params)

@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", prowlarr: "Prowlarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr", media: "Plex, Jellyfin & Emby" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", trash: "TRaSH guide", prowlarr: "Prowlarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr", media: "Plex, Jellyfin & Emby" };
 let dashArea = "all";
 let showDismissed = false;
 
