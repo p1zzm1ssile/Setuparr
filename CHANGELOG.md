@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0
+
+- **Your profiles against TRaSH:** each check run compares the Sonarr and Radarr profiles named after a TRaSH profile
+  with the guide as it is today: custom formats that are missing, out of date or scored differently, and a different
+  minimum score, upgrades setting or Upgrade Until. **Update to TRaSH** brings a profile up to date, keeping the scores
+  of your own custom formats, and can be undone under **Recent fixes**.
+- **Quality sizes:** when you use TRaSH profiles, sizes that differ from TRaSH's are listed, and **Use TRaSH sizes**
+  sets them (undo under **Recent fixes**). Sizes left at unlimited aren't counted.
+- **Naming:** Sonarr and Radarr naming that isn't one of TRaSH's formats, with the one to paste in for the media server
+  you've connected.
+- All three are under the new **TRaSH guide** area on the Dashboard. The guide's files now include TRaSH's quality
+  sizes and naming, so they're downloaded again once after updating.
+
 ## 0.8.1
 
 - **No longer runs as root:** Setuparr now runs as **PUID** and **PGID** (99 and 100, Unraid's `nobody:users`, unless

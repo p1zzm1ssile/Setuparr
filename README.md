@@ -172,6 +172,21 @@ add. Nothing is deleted, scores you've given your own custom formats are kept, a
 **Recent fixes** on the Dashboard. The guide's files are downloaded from GitHub at most once a day and kept in the
 config folder (`trash-sonarr.json`, `trash-radarr.json`); nothing about your setup is sent.
 
+### Your Sonarr and Radarr against the TRaSH guide
+
+Each check run compares Sonarr and Radarr with the guide as it is today, so a setup made once doesn't quietly go out of
+date. Shown under **TRaSH guide** on the Dashboard.
+
+- **Profiles that have drifted:** a profile named after a TRaSH profile whose custom formats are missing, out of date
+  or scored differently, or whose minimum score, upgrades or Upgrade Until differ. **Update to TRaSH** brings it up to
+  date the same way an import does, and can be undone. Profiles with your own names are never compared.
+- **Quality sizes** that differ from TRaSH's, when you use TRaSH profiles. **Use TRaSH sizes** sets them, and can be
+  undone. Sizes left at unlimited aren't counted.
+- **Naming** that isn't one of TRaSH's formats, with the right one to paste in for the media server you've connected
+  (Plex, Jellyfin or Emby). Anime naming has its own check.
+
+This downloads the guide's files on the first check run of the day, if the Profiles page hasn't already.
+
 ### Guides
 
 The **Guides** page explains the Extra Parameters you can give a container in Unraid's Advanced View: GPUs, memory and
@@ -180,7 +195,6 @@ with what each does, when to use it and an example.
 
 ### Coming next
 
-- Checking existing Sonarr and Radarr profiles against TRaSH, and TRaSH quality sizes and naming.
 - SABnzbd and NZBGet folders and categories.
 - Your own genre rules (Kids, Documentaries, Stand-up…) and what doesn't follow them.
 - More **Fix it** buttons, including for download client settings, and anime checks for Radarr.

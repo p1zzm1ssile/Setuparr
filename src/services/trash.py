@@ -26,7 +26,7 @@ from utils.logger import logger
 APPS = {"sonarr": "Sonarr", "radarr": "Radarr"}
 RAW = "https://raw.githubusercontent.com/TRaSH-Guides/Guides/master/docs/json/{app}/{path}"
 LISTING = "https://api.github.com/repos/TRaSH-Guides/Guides/contents/docs/json/{app}/{folder}?ref=master"
-FOLDERS = ("quality-profiles", "cf-groups", "cf")
+FOLDERS = ("quality-profiles", "cf-groups", "cf", "quality-size")
 CACHE_SECONDS = 24 * 3600
 # Quality groups made by the import get ids from here, like Sonarr and Radarr's own
 GROUP_IDS = 1000
@@ -47,8 +47,10 @@ def _get(url):
 
 
 def download(app):
-    """Every quality profile, custom format group and custom format in the guide for app, plus its profile groups."""
-    data = {"groups": _get(RAW.format(app=app, path="quality-profile-groups/groups.json"))}
+    """Every quality profile, custom format group, custom format and set of quality sizes in the guide for app, plus
+    its profile groups and naming scheme."""
+    data = {"groups": _get(RAW.format(app=app, path="quality-profile-groups/groups.json")),
+            "naming": _get(RAW.format(app=app, path=f"naming/{app}-naming.json"))}
     with ThreadPoolExecutor(8) as pool:
         for folder in FOLDERS:
             names = [e["name"] for e in _get(LISTING.format(app=app, folder=folder))
@@ -67,7 +69,9 @@ def guide(app, fresh=False):
             cached = json.load(f)
     except (OSError, ValueError):
         cached = None
-    if cached and not fresh and time.time() - cached.get("fetched_at", 0) < CACHE_SECONDS:
+    # A copy from before 0.9.0 has no quality sizes or naming, so it's downloaded again
+    complete = cached and all(k in cached.get("data", {}) for k in ("quality-size", "naming"))
+    if complete and not fresh and time.time() - cached.get("fetched_at", 0) < CACHE_SECONDS:
         return cached["data"]
     try:
         data = download(app)

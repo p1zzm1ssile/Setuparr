@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's own advice, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 
@@ -35,7 +35,6 @@ def secret_key(service):
 # Shown on the Dashboard until each check is ready
 PLANNED = [
     {"title": "TRaSH guides", "items": [
-        "Checking your existing Sonarr and Radarr profiles against TRaSH, and quality sizes and naming.",
         "SABnzbd and NZBGet folders and categories.",
         "Each difference with a Fix it button that shows the change before making it, or step-by-step instructions.",
     ]},
