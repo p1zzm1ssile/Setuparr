@@ -16,8 +16,8 @@ import requests
 
 import app_info
 import utils.config as config
-from checks import (PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, drift, library, media, plural,
-                    prowlarr, seerr, tags, unraid)
+from checks import (PROBLEM, SEVERITY_ORDER, TIP, WARNING, anime, arr, bazarr, downloads, drift, library, limits, media,
+                    plural, prowlarr, seerr, tags, unraid)
 from services import trash
 from services.connections import ServiceError, connected
 from utils.logger import logger
@@ -381,6 +381,9 @@ def run():
                 run_check(f"{label} profiles and health", arr.check, key, label, fetched[key], snap)
                 run_check(f"{label} download clients", downloads.check_arr, key, label, fetched[key], clients)
                 run_check(f"{label} queue", downloads.check_archives, label, fetched[key].get("queue"), snap)
+                if key in limits.THINGS:
+                    run_check(f"{label} limits", limits.check, key, label, fetched[key],
+                              getattr(config, f"{key}_max_resolution", 0), getattr(config, f"{key}_max_size_gb", 0))
         run_check("shared categories", downloads.check_shared_categories,
                   {key: (label, fetched[key]) for key, label in ARRS if key in fetched})
         for key, client in clients.items():
@@ -401,7 +404,8 @@ def run():
         for key in trash.APPS:
             if key in fetched:
                 run_check(f"{trash.APPS[key]} against TRaSH", drift.check, key, trash.APPS[key], fetched[key],
-                          trash_guide(key), servers)
+                          trash_guide(key), servers,
+                          limits.mb_per_minute(key, fetched[key], getattr(config, f"{key}_max_size_gb", 0)))
         if "sonarr" in fetched:
             run_check("anime", anime.check, fetched["sonarr"], fetched.get("seerr"))
 
@@ -520,8 +524,9 @@ def _apply_fix(finding_id):
             if q:
                 for key, field, _ in drift.SIZE_FIELDS:
                     # An empty (unlimited) value is left as it is, as the check doesn't count it
-                    if new.get(field) is not None and q.get(key) is not None and new[field] != q[key]:
-                        new[field] = q[key]
+                    want = drift.wanted_size(q.get(key), params.get("cap"))
+                    if new.get(field) is not None and want is not None and new[field] != want:
+                        new[field] = want
             changed += new != d
             after.append(new)
         if not changed:
@@ -529,6 +534,33 @@ def _apply_fix(finding_id):
         service.call("PUT", "/qualitydefinition/update", after)
         undo = {"action": "restore_quality_sizes", "params": {"service": params["service"], "definitions": before}}
         message = f"Set {changed} quality size{'s' if changed != 1 else ''} in {service.label} to TRaSH's"
+    elif action == "cap_resolution":
+        service = _service(params["service"])
+        before, changed = [], []
+        for profile_id in params["profile_ids"]:
+            profile = service.call("GET", f"/qualityprofile/{profile_id}")
+            capped = limits.capped_profile(profile, params["max_resolution"])
+            if capped and capped != profile:
+                service.call("PUT", f"/qualityprofile/{profile_id}", capped)
+                before.append(profile)
+                changed.append(profile.get("name"))
+        if not changed:
+            raise ValueError(f"Those profiles in {service.label} have changed since the check. Run the checks again")
+        undo = {"action": "restore_profiles", "params": {"service": params["service"], "profiles": before}}
+        message = (f"Turned off the qualities above {limits.resolution_name(params['max_resolution'])} in "
+                   f"{', '.join(changed)} in {service.label}")
+
+    elif action == "cap_quality_sizes":
+        service = _service(params["service"])
+        before = service.call("GET", "/qualitydefinition")
+        after = limits.capped_definitions(before, params["cap"])
+        changed = sum(a != b for a, b in zip(after, before))
+        if not changed:
+            raise ValueError(f"{service.label}'s quality sizes already keep to your limit. Run the checks again")
+        service.call("PUT", "/qualitydefinition/update", after)
+        undo = {"action": "restore_quality_sizes", "params": {"service": params["service"], "definitions": before}}
+        message = (f"Brought {changed} quality size{'s' if changed != 1 else ''} in {service.label} down to "
+                   f"{params['cap']:g} MB per minute")
     else:
         raise ValueError("Unknown fix")
 
@@ -602,6 +634,11 @@ def _undo_fix(fix_id):
         service = _service(params["service"])
         service.call("PUT", "/qualitydefinition/update", params["definitions"])
         message = f"Put the quality sizes in {service.label} back as they were"
+    elif action == "restore_profiles":
+        service = _service(params["service"])
+        for profile in params["profiles"]:
+            service.call("PUT", f"/qualityprofile/{profile['id']}", profile)
+        message = f"Put {', '.join(p.get('name') or '?' for p in params['profiles'])} back as before in {service.label}"
     elif action == "undo_trash_import":
         service = _service(params["app"])
         trash.put_back(service, params)

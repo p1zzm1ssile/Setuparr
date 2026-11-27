@@ -2,7 +2,7 @@
 
 NAME = "Setuparr"
 SLUG = "setuparr"
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 PORT = 9893
 TAGLINE = "Checks your Unraid media setup against the TRaSH guides and Unraid's own advice, then fixes what doesn't match with one button, or shows you how to fix it yourself."
 
@@ -31,6 +31,22 @@ LOGINS = {"qbittorrent": True, "transmission": True, "deluge": False}
 def secret_key(service):
     """The setting that holds an app's API key, or a download client's password."""
     return f"{service}_password" if service in LOGINS else f"{service}_api_key"
+
+# The steps of the limit sliders on the Sonarr and Radarr tabs. 0 is no limit, so it goes at the top end.
+RESOLUTIONS = [480, 720, 1080, 2160, 0]
+FILM_SIZES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80, 0]
+EPISODE_SIZES = [0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 15, 20, 0]
+
+
+def resolution_label(resolution):
+    return {0: "No limit", 480: "480p (SD)", 2160: "2160p (4K)"}.get(resolution, f"{resolution}p")
+
+
+def size_label(gb):
+    if not gb:
+        return "No limit"
+    return f"{gb * 1000:g} MB" if gb < 1 else f"{gb:g} GB"
+
 
 # Shown on the Dashboard until each check is ready
 PLANNED = [

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+- **Your limits:** new sliders on the Sonarr and Radarr tabs in **Settings** for the highest resolution and the largest
+  file you want, set separately for films and for series' episodes. They start at **No limit**, so nothing changes until
+  you move them.
+- With a limit set, each check run points out, under the new **Your limits** area on the Dashboard: quality profiles in
+  use that allow qualities above your resolution (**Turn off above…** unticks them), quality sizes that let releases
+  bigger than your limit through, worked out from how long your films and episodes run (**Keep to my limit** brings
+  them down), and films or series you already have above either limit. Both buttons can be undone under
+  **Recent fixes**.
+- The TRaSH quality size check compares with your own size limit wherever it's lower than TRaSH's.
+
 ## 0.9.0
 
 - **Your profiles against TRaSH:** each check run compares the Sonarr and Radarr profiles named after a TRaSH profile

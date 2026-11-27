@@ -54,6 +54,14 @@ def env_int(*names, default=0):
         return default
 
 
+def env_float(*names, default=0.0):
+    value = env_str(*names, default=None)
+    try:
+        return float(value) if value not in (None, "") else default
+    except ValueError:
+        return default
+
+
 # Only set by environment, since they're needed before the web UI can run
 config_dir = os.getenv("CONFIG_DIR") or ("/config" if os.path.isdir("/config") else "config")
 settings_file = os.path.join(config_dir, "settings.json")
@@ -72,7 +80,9 @@ def secret_label(service):
 
 
 def F(key, tab, label, type, default, help="", section="", **extra):
-    """Describe one setting. type is bool, int, text, secret, select or labels."""
+    """Describe one setting. type is bool, int, text, secret, select, labels or slider.
+
+    A slider picks one of its options (numbers), shown as option_labels."""
     return dict(key=key, tab=tab, label=label, type=type, default=default, help=help, section=section, **extra)
 
 
@@ -116,9 +126,41 @@ FIELDS = [
               env_str(app_info.secret_key(service).upper()), section="Connection", help=key_help),
         )
     ],
+
+    *[
+        field
+        for service, things, size_label, sizes, size_help in (
+            ("radarr", "films", "Largest film", app_info.FILM_SIZES,
+             "The most one film should take up. Setuparr works out the quality sizes that keep to it from how long "
+             "your films run."),
+            ("sonarr", "series", "Largest episode", app_info.EPISODE_SIZES,
+             "The most one episode should take up. Setuparr works out the quality sizes that keep to it from how long "
+             "your episodes run."),
+        )
+        for field in (
+            F(f"{service}_max_resolution", service, "Highest resolution", "slider",
+              env_float(f"{service.upper()}_MAX_RESOLUTION", default=0), section="Your limits",
+              options=app_info.RESOLUTIONS, option_labels=[app_info.resolution_label(r) for r in app_info.RESOLUTIONS],
+              help=f"Setuparr points out quality profiles that would grab {things} above this, and {things} you "
+                   "already have above it. Nothing is changed unless you press Fix it."),
+            F(f"{service}_max_size_gb", service, size_label, "slider",
+              env_float(f"{service.upper()}_MAX_SIZE_GB", default=0), section="Your limits",
+              options=sizes, option_labels=[app_info.size_label(s) for s in sizes], help=size_help),
+        )
+    ],
 ]
 
 FIELDS_BY_KEY = {f["key"]: f for f in FIELDS}
+
+
+def _slider_defaults():
+    """A slider's environment variable that isn't one of its steps means no limit, rather than a value the UI can't show."""
+    for f in FIELDS:
+        if f["type"] == "slider":
+            try:
+                f["default"] = coerce(f, f["default"])
+            except ValueError:
+                f["default"] = 0
 SECRET_KEYS = {f["key"] for f in FIELDS if f["type"] == "secret"}
 
 # The address each secret is sent to. A saved secret is never reused with a new
@@ -166,6 +208,14 @@ def coerce(field, value):
         if "max" in field and number > field["max"]:
             raise ValueError(f"must be at most {field['max']}")
         return number
+    if t == "slider":
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("must be a number")
+        if number not in field["options"]:
+            raise ValueError("isn't one of the slider's steps")
+        return int(number) if number.is_integer() else number
     if t == "select":
         if value not in field["options"]:
             raise ValueError(f"must be one of {', '.join(field['options'])}")
@@ -189,6 +239,10 @@ def coerce(field, value):
             if not item.startswith("/") or item.rstrip("/") == "":
                 raise ValueError(f"must be full folders inside the container, like /movies: {item}")
     return value
+
+
+_slider_defaults()
+values = {f["key"]: f["default"] for f in FIELDS}
 
 
 def parse_networks(value):
