@@ -103,7 +103,7 @@ const SEVERITY = {
   warning: { label: "Warning", badge: "warn", tile: "warn", many: "Warnings" },
   tip: { label: "Tip", badge: "info", tile: "info", many: "Tips" },
 };
-const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", trash: "TRaSH guide", prowlarr: "Prowlarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr", media: "Plex, Jellyfin & Emby" };
+const AREAS = { all: "Everything", unraid: "Unraid", downloads: "Downloads", library: "Library", arr: "Sonarr, Radarr & Lidarr", trash: "TRaSH guide", limits: "Your limits", prowlarr: "Prowlarr", tags: "Tags", anime: "Anime", bazarr: "Bazarr", seerr: "Seerr", media: "Plex, Jellyfin & Emby" };
 let dashArea = "all";
 let showDismissed = false;
 
@@ -516,6 +516,27 @@ function fieldInput(field, value, onChange) {
     const input = el("input", { type: "checkbox", id, checked: !!value, onchange: onChange });
     return { node: el("label", { class: "switch", for: id }, input, el("span", { class: "track" }),
       el("span", { class: "text" }, field.label, help, error)), get: () => input.checked, input };
+  }
+
+  if (field.type === "slider") {
+    // Picks one of the field's steps. The range works on their positions, so the steps needn't be evenly spaced.
+    const position = Math.max(0, field.options.findIndex((o) => o === Number(value)));
+    const shown = el("span", { class: "slider-value", text: field.option_labels[position] });
+    const input = el("input", { type: "range", id, min: 0, max: field.options.length - 1, step: 1, value: position,
+      "aria-valuetext": field.option_labels[position],
+      oninput: () => {
+        const text = field.option_labels[Number(input.value)];
+        shown.textContent = text;
+        input.setAttribute("aria-valuetext", text);
+        onChange();
+      } });
+    return {
+      node: el("label", { class: "field", for: id }, el("span", { class: "label" }, field.label, shown), input,
+        el("div", { class: "slider-ends muted small" }, el("span", { text: field.option_labels[0] }),
+          el("span", { text: field.option_labels[field.options.length - 1] })), help, error),
+      get: () => field.options[Number(input.value)],
+      input,
+    };
   }
 
   let input;

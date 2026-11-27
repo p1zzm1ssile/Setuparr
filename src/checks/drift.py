@@ -24,13 +24,14 @@ SIZE_FIELDS = (("min", "minSize", "Minimum"), ("preferred", "preferredSize", "Pr
 SERVERS = (("plex", "Plex"), ("jellyfin", "Jellyfin"), ("emby", "Emby"))
 
 
-def check(service, label, d, guide, servers=()):
-    """d holds what fetch_arr reads. servers: the media servers connected to Setuparr, to suggest a naming scheme."""
+def check(service, label, d, guide, servers=(), cap=None):
+    """d holds what fetch_arr reads. servers: the media servers connected to Setuparr, to suggest a naming scheme.
+    cap: the largest quality size (MB per minute) the user's size limit allows, if they set one."""
     if service not in LINKS or not guide:
         return []
     following = trash_profiles_in_use(d, guide)
     return (check_profiles(service, label, d, guide)
-            + (check_sizes(service, label, d.get("definitions"), guide) if following else [])
+            + (check_sizes(service, label, d.get("definitions"), guide, cap) if following else [])
             + check_naming(service, label, d.get("naming"), guide, servers))
 
 
@@ -123,9 +124,14 @@ def size_reference(service, guide):
     return next((s for s in guide.get("quality-size") or [] if s.get("type") == wanted), None)
 
 
-def size_differences(definitions, ref):
+def wanted_size(value, cap):
+    """TRaSH's size, kept within the user's own size limit (MB per minute) when they set one."""
+    return value if cap is None or value is None else min(float(value), cap)
+
+
+def size_differences(definitions, ref, cap=None):
     """{quality name: [(label, yours, TRaSH's)]} for the qualities TRaSH sets. An empty value (unlimited) in the app
-    isn't compared, since the sliders show it as their top end."""
+    isn't compared, since the sliders show it as their top end. With a cap, TRaSH's sizes are capped to it."""
     mine = {(d.get("quality") or {}).get("name"): d for d in definitions or []}
     out = {}
     for q in ref.get("qualities") or []:
@@ -134,11 +140,11 @@ def size_differences(definitions, ref):
             continue
         diffs = []
         for key, field, word in SIZE_FIELDS:
-            value = current.get(field)
-            if value is None or q.get(key) is None:
+            value, want = current.get(field), wanted_size(q.get(key), cap)
+            if value is None or want is None:
                 continue
-            if abs(float(value) - float(q[key])) > 0.05:
-                diffs.append((word, value, q[key]))
+            if abs(float(value) - float(want)) > 0.05:
+                diffs.append((word, value, want))
         if diffs:
             out[q["quality"]] = diffs
     return out
@@ -148,24 +154,28 @@ def _size(value):
     return f"{float(value):g}"
 
 
-def check_sizes(service, label, definitions, guide):
+def check_sizes(service, label, definitions, guide, cap=None):
     ref = size_reference(service, guide)
     if not ref or not definitions:
         return []
-    diffs = size_differences(definitions, ref)
+    diffs = size_differences(definitions, ref, cap)
     if not diffs:
         return []
-    lines = [f"{quality}: " + ", ".join(f"{word} {_size(a)} here, {_size(b)} in TRaSH" for word, a, b in found)
-             for quality, found in diffs.items()]
+    def line(word, a, b):
+        where = "your limit" if cap is not None and b == cap else "TRaSH"
+        return f"{word} {_size(a)} here, {_size(b)} in {where}"
+
+    lines = [f"{quality}: " + ", ".join(line(*diff) for diff in found) for quality, found in diffs.items()]
     return [finding(
         "sizes", AREA, TIP, label, f"{plural(len(diffs), 'quality size')} in {label} {'differs' if len(diffs) == 1 else 'differ'} from TRaSH's",
         f"You use TRaSH profiles, but not TRaSH's quality sizes. The sizes (MB per minute) decide which releases are "
         f"too small or too big to grab, and TRaSH's are tuned to drop fakes and bloated encodes without losing good "
-        "releases.",
+        "releases." + (f" Sizes above your own limit ({cap:g} MB per minute) are compared with your limit instead."
+                       if cap is not None else ""),
         steps=["Press Use TRaSH sizes to set them. It can be undone under Recent fixes.",
                f"Or set them by hand in {label} under Settings > Quality (Show Advanced)."],
         items=lines, link=LINKS[service]["sizes"],
-        fix={"action": "set_quality_sizes", "params": {"service": service, "trash_id": ref.get("trash_id")},
+        fix={"action": "set_quality_sizes", "params": {"service": service, "trash_id": ref.get("trash_id"), "cap": cap},
              "label": "Use TRaSH sizes",
              "confirm": f"Set {plural(len(diffs), 'quality size')} in {label} to TRaSH's? You can undo it under Recent "
                         "fixes."})]

@@ -187,6 +187,22 @@ date. Shown under **TRaSH guide** on the Dashboard.
 
 This downloads the guide's files on the first check run of the day, if the Profiles page hasn't already.
 
+### Your limits (Sonarr, Radarr)
+
+Two sliders on the Sonarr and Radarr tabs in **Settings** set the highest resolution and the largest file you want, for
+films and for series' episodes separately. Both start at **No limit**, which turns these checks off. Shown under
+**Your limits** on the Dashboard.
+
+- **Profiles that go higher:** the quality profiles your films or series use that allow qualities above your highest
+  resolution. **Turn off above 1080p** (or whichever you chose) unticks them, moving Upgrade Until down to the best
+  quality left, and can be undone.
+- **Quality sizes that go bigger:** Sonarr and Radarr limit sizes in MB per minute, so Setuparr works out the size that
+  keeps nine in ten of your films, or your series' episodes, under your limit from how long they run. **Keep to my
+  limit** brings bigger or unlimited sizes down to it, and can be undone. The TRaSH quality size check then compares
+  with your limit wherever it's below TRaSH's, so the two don't undo each other.
+- **What you already have** above your highest resolution or over your largest size (for series, on average per
+  episode), to keep or replace as you like.
+
 ### Guides
 
 The **Guides** page explains the Extra Parameters you can give a container in Unraid's Advanced View: GPUs, memory and
