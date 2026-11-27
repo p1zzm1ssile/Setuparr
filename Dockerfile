@@ -1,6 +1,6 @@
 # Building from vanilla alpine base, as the official Python alpine image lags behind on security fixes.
 # Pinned to a release so the same commit always builds the same way; Dependabot proposes newer ones.
-FROM alpine:3.22
+FROM alpine:3.24
 
 LABEL author="p1zzm1ssile"
 LABEL org.opencontainers.image.source="https://github.com/p1zzm1ssile/Setuparr"
